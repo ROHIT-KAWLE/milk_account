@@ -117,45 +117,6 @@ details[data-testid="stExpander"]{
   overflow: hidden !important;
 }
 
-/* Disable column sorting */
-div[data-testid="stDataEditor"] button[aria-label="Sort ascending"],
-div[data-testid="stDataEditor"] button[aria-label="Sort descending"] {
-    display:none !important;
-}
-
-div[data-testid="stDataEditor"] th {
-    pointer-events:none !important;
-}
-            
-/* Sticky header */
-div[data-testid="stDataEditor"] table thead th {
-    position: sticky !important;
-    top: 0;
-    z-index: 10;
-    background: #f0f0f0 !important;
-}
-
-div[data-testid="stDataEditor"] table tbody tr:focus-within{
-    background:#fff3b0 !important;
-}
-
-/* Freeze ID column */
-div[data-testid="stDataEditor"] table tbody td:nth-child(1),
-div[data-testid="stDataEditor"] table thead th:nth-child(1){
-    position: sticky;
-    left: 0;
-    background: white;
-    z-index: 20;
-}
-
-/* Freeze Retailer column */
-div[data-testid="stDataEditor"] table tbody td:nth-child(2),
-div[data-testid="stDataEditor"] table thead th:nth-child(2){
-    position: sticky;
-    left: 90px;
-    background: white;
-    z-index: 19;
-}
 
 hr { border-color: rgba(15,23,42,0.08) !important; }
 
