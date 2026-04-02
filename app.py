@@ -6,7 +6,7 @@ import zipfile
 import io
 import plotly.express as px
 from supabase import create_client
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from st_aggrid import AgGrid, GridOptionsBuilder
 
 
 
