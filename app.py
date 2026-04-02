@@ -4024,6 +4024,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             domLayout="normal",
             suppressMovableColumns=True,
             alwaysShowHorizontalScroll=True,
+     
             ensureDomOrder=True,
             suppressColumnVirtualisation=True,
             rowSelection="single",
@@ -4037,7 +4038,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
         grid = AgGrid(
             draft_df,
             gridOptions=grid_options,
-            update_mode=GridUpdateMode.MANUAL,
+            update_on=["cellValueChanged"],
             height=table_height,
             fit_columns_on_grid_load=True,
             allow_unsafe_jscode=True,
