@@ -6,6 +6,7 @@ import zipfile
 import io
 import plotly.express as px
 from supabase import create_client
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 
 
@@ -13,7 +14,9 @@ from supabase import create_client
 
 # ================== PAGE CONFIG ==================
 st.set_page_config(page_title="Milk Accounting Pro", layout="wide", initial_sidebar_state="expanded")
-st.markdown("""
+if "css_loaded" not in st.session_state:
+    st.session_state["css_loaded"] = True
+    st.markdown("""
 <style>
 :root{
   --bg: #F6F7FB;
@@ -98,7 +101,7 @@ div[data-testid="stMetric"] [data-testid="stMetricValue"]{
   font-weight: 950 !important;
 }
 
-div[data-testid="stDataFrame"]{
+div[data-testid="stDataEditor"]{
   background: var(--card) !important;
   border-radius: var(--radius) !important;
   border: 1px solid var(--border) !important;
@@ -112,6 +115,46 @@ details[data-testid="stExpander"]{
   border-radius: var(--radius) !important;
   box-shadow: var(--shadow2) !important;
   overflow: hidden !important;
+}
+
+/* Disable column sorting */
+div[data-testid="stDataEditor"] button[aria-label="Sort ascending"],
+div[data-testid="stDataEditor"] button[aria-label="Sort descending"] {
+    display:none !important;
+}
+
+div[data-testid="stDataEditor"] th {
+    pointer-events:none !important;
+}
+            
+/* Sticky header */
+div[data-testid="stDataEditor"] table thead th {
+    position: sticky !important;
+    top: 0;
+    z-index: 10;
+    background: #f0f0f0 !important;
+}
+
+div[data-testid="stDataEditor"] table tbody tr:focus-within{
+    background:#fff3b0 !important;
+}
+
+/* Freeze ID column */
+div[data-testid="stDataEditor"] table tbody td:nth-child(1),
+div[data-testid="stDataEditor"] table thead th:nth-child(1){
+    position: sticky;
+    left: 0;
+    background: white;
+    z-index: 20;
+}
+
+/* Freeze Retailer column */
+div[data-testid="stDataEditor"] table tbody td:nth-child(2),
+div[data-testid="stDataEditor"] table thead th:nth-child(2){
+    position: sticky;
+    left: 90px;
+    background: white;
+    z-index: 19;
 }
 
 hr { border-color: rgba(15,23,42,0.08) !important; }
@@ -138,7 +181,7 @@ DISTRIBUTOR_CATEGORY_MAP_FILE = "data/distributor_category_map.csv"
 WASTAGE_FILE = "data/wastage.csv"
 EXPENSES_FILE = "data/expenses.csv"
 
-GLOBAL_RETAILER_ID = -1
+GLOBAL_RETAILER_ID = None
 
 FILE_TO_TABLE = {
     RETAILERS_FILE: ("retailers", "retailer_id"),
@@ -221,7 +264,7 @@ def make_full_backup_zip(data_version: int) -> bytes:
             zf.writestr(f"{name}.csv", csv_bytes)
     return buf.getvalue()
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)
 def load_and_migrate_data_cached(_version: int):
     """Cached wrapper: prevents full-table fetch on every widget interaction."""
     _ = int(_version)  # IMPORTANT: makes cache depend on data_version
@@ -448,6 +491,18 @@ def fmt_zero_dash(x) -> str:
     return "–" if v == 0.0 else f"{v:.2f}"
 
 
+def highlight_cell(v):
+    try:
+        x = float(v)
+    except:
+        return f"<td>{v}</td>"
+
+    if x == 0:
+        return "<td style='color:#bbb'>0.0</td>"
+    else:
+        return f"<td style='font-weight:700;background:#e8ffe8'>{x:.2f}</td>"
+
+
 def parse_boolish_paid(v) -> bool:
     if v is None:
         return False
@@ -530,7 +585,7 @@ def sb_fetch_all(table: str, cols="*", page_size: int = 5000, max_retries: int =
 
             except Exception as e:
                 last_exc = e
-                time.sleep(0.3 * attempt)  # small backoff
+                time.sleep(0.05 * attempt)  # small backoff
 
         if last_exc is not None:
             raise last_exc
@@ -747,7 +802,7 @@ def _normalize_df_from_rows(path: str, columns: list[str], rows: list[dict]) -> 
     return df[keep].copy()
 
 
-def sb_fetch_where(table: str, cols: str = "*", filters: list[tuple] | None = None, page_size: int = 5000, in_chunk: int = 500) -> list[dict]:
+def sb_fetch_where(table: str, cols: str = "*", filters: list[tuple] | None = None, page_size: int = 20000, in_chunk: int = 500) -> list[dict]:
     """
     Fetch rows from Supabase table with server-side filters.
     Supported ops: eq, lt, lte, gt, gte, in
@@ -899,7 +954,7 @@ def sb_insert_df(df: object, path: str) -> None:
         if df[pk].isna().any():
             raise RuntimeError(f"{table}: mixed NULL/non-NULL primary keys while inserting")
 
-        for i in range(0, len(records), 500):
+        for i in range(0, len(records), 1000):
             sb.table(table).insert(records[i:i+500]).execute()
 
     # Persist snapshot + refresh caches
@@ -907,7 +962,7 @@ def sb_insert_df(df: object, path: str) -> None:
     invalidate_data_cache()
 
 
-def sb_delete_by_pk(table: str, pk: str, ids: list[int], chunk: int = 500) -> None:
+def sb_delete_by_pk(table: str, pk: str, ids: list[int], chunk: int = 1000) -> None:
     sb = get_sb()
     ids = [int(x) for x in ids if x is not None]
     if not ids:
@@ -1505,7 +1560,7 @@ def build_daily_report_html(
         rows = ""
         for _, r in df.iterrows():
             rows += "<tr>" + "".join(
-                f"<td>{esc(r[c])}</td>" for c in df.columns
+                highlight_cell(r[c]) for c in df.columns
             ) + "</tr>"
 
         return f"""
@@ -1607,7 +1662,7 @@ th {{
 </div>
 
 <div class="header">
-<h2>JYOTIRLING MILK SUPPLIERS</h2>
+<h2>RANKIT BHIMRAO KAWLE MILK</h2>
 <h4>Daily Business Summary</h4>
 <p>Date: {report_day}</p>
 </div>
@@ -1649,7 +1704,7 @@ def load_and_migrate_data():
 
     prices = safe_read_csv(PRICES_FILE, CSV_SCHEMAS[PRICES_FILE])
     prices["price_id"] = pd.to_numeric(prices["price_id"], errors="coerce").fillna(0).astype(int)
-    prices["retailer_id"] = pd.to_numeric(prices["retailer_id"], errors="coerce").fillna(GLOBAL_RETAILER_ID).astype(int)
+    prices["retailer_id"] = pd.to_numeric(prices["retailer_id"], errors="coerce").fillna(0).astype(int)
     prices["category_id"] = pd.to_numeric(prices["category_id"], errors="coerce").fillna(0).astype(int)
     prices["price"] = pd.to_numeric(prices["price"], errors="coerce").fillna(0.0).astype(float)
     prices.loc[prices["retailer_id"] == 0, "retailer_id"] = GLOBAL_RETAILER_ID
@@ -1724,7 +1779,43 @@ def load_and_migrate_data():
     return retailers, categories, prices, entries, payments, distributors, dist_purchases, dist_payments, dist_cat_map, wastage, expenses
 
 st.session_state.setdefault("data_version", 0)
-retailers, categories, prices, entries, payments, distributors, dist_purchases, dist_payments, dist_cat_map, wastage, expenses = load_and_migrate_data_cached(st.session_state["data_version"])
+
+if "all_tables" not in st.session_state or st.session_state.get("last_version") != st.session_state["data_version"]:
+
+    data = load_and_migrate_data_cached(st.session_state["data_version"])
+
+    (
+        retailers,
+        categories,
+        prices,
+        entries,
+        payments,
+        distributors,
+        dist_purchases,
+        dist_payments,
+        dist_cat_map,
+        wastage,
+        expenses,
+    ) = data
+
+    st.session_state["all_tables"] = data
+    st.session_state["last_version"] = st.session_state["data_version"]
+
+else:
+
+    (
+        retailers,
+        categories,
+        prices,
+        entries,
+        payments,
+        distributors,
+        dist_purchases,
+        dist_payments,
+        dist_cat_map,
+        wastage,
+        expenses,
+    ) = st.session_state["all_tables"]
 # ================== ZONE HELPERS ==================
 def get_all_zones() -> list[str]:
     if retailers.empty:
@@ -2312,7 +2403,7 @@ def _day_payments_for_zone(day: date, zone: str) -> pd.DataFrame:
     df = filter_by_zone(df, "retailer_id", zone)
 
     return df
-PAYMENT_MODES = ["CASH", "UPI", "BANK", "CHEQUE", "OTHER"]
+PAYMENT_MODES = ["CASH", "UPI","CHEQUE"]
 
 
 def _day_fetch_strict(path: str, day: date, zone: str) -> pd.DataFrame:
@@ -2738,11 +2829,11 @@ def build_bill_html(
                 except Exception:
                     qdisp = "-"
 
-            tds += f"<td style='text-align:right'>{qdisp}</td>"
+            tds += highlight_cell(qdisp)
 
-        tds += f"<td style='text-align:right'>{fmt_num(r.get('Total Milk (L)', 0.0))}</td>"
-        tds += f"<td style='text-align:right'>{fmt_money(r.get('Sales (₹)', 0.0))}</td>"
-        tds += f"<td style='text-align:right'>{fmt_money(r.get('Payment (₹)', 0.0))}</td>"
+        tds += highlight_cell(r.get("Total Milk (L)",0.0))
+        tds += highlight_cell(r.get("Sales (₹)",0.0))
+        tds += highlight_cell(r.get("Payment (₹)",0.0))
         tds += f"<td style='text-align:right'>{fmt_money(r.get('Running Due (₹)', 0.0))}</td>"
         body_rows += f"<tr>{tds}</tr>"
 
@@ -2867,7 +2958,9 @@ payments_z = filter_by_zone(payments.copy(), "retailer_id", selected_zone) if no
 
 # ================== UI ==================
 st.title("🥛 JYOTIRLING MILK SUPPLIER")
-st.markdown(f"""
+if "css_loaded" not in st.session_state:
+    st.session_state["css_loaded"] = True
+    st.markdown(f"""
 <div style="
   display:flex; align-items:center; justify-content:space-between;
   padding:18px 20px; margin-bottom:14px;
@@ -3285,7 +3378,15 @@ if menu == "📊 Dashboard":
         "closing_ledger": float(pd.to_numeric(zone_opening, errors="coerce").fillna(0.0).sum()) + float(pd.to_numeric(zone_sales, errors="coerce").fillna(0.0).sum()) - float(pd.to_numeric(zone_pay, errors="coerce").fillna(0.0).sum()),
     }
 
-    report_cols = ["Name"] + cat_names + ["TOTAL (L)", "Total Purchase Cost (₹)", "Previous Ledger (₹)", "Payment Given (₹)", "Total Ledger (₹)"]
+    report_cols = [
+        "Name",
+    ] + cat_names + [
+        "TOTAL (L)",
+        "Total Purchase Cost (₹)",
+        "Previous Ledger (₹)",
+        "Payment Given (₹)",
+        "Total Ledger (₹)",
+    ]
     retailer_report_df = pd.DataFrame(report_rows)
     for c in report_cols:
         if c not in retailer_report_df.columns:
@@ -3413,6 +3514,8 @@ if menu == "📊 Dashboard":
             waste_qty = float(pd.to_numeric(wz_day.get("qty", 0.0), errors="coerce").fillna(0.0).sum())
             waste_loss = float(pd.to_numeric(wz_day.get("estimated_loss", 0.0), errors="coerce").fillna(0.0).sum())
 
+    
+    html_report = None
 
     try:
         html_report = build_daily_report_html(
@@ -3583,7 +3686,37 @@ if menu == "📊 Dashboard":
                 )
 
             # ---------------- HTML ----------------
-
+            
+            
+            
+            # ----- FIX COLUMN ORDER FOR HTML -----
+            base_cols = [c for c in ["ID", "Retailer", "Name"] if c in preview_df.columns]
+            category_cols = [
+                c for c in preview_df.columns
+                if c not in base_cols
+                and "₹" not in c
+                and "Ledger" not in c
+                and "Total" not in c
+            ]
+            sales_cols = [c for c in preview_df.columns if "TOTAL" in c or "Sales" in c]
+            
+            prev_cols = [c for c in preview_df.columns if "Previous Ledger" in c]
+            
+            payment_cols = [c for c in preview_df.columns if "₹" in c and "Ledger" not in c and "Sales" not in c]
+            
+            ledger_cols = [c for c in preview_df.columns if "Total Ledger" in c]
+            
+            new_order = (
+                base_cols
+                + category_cols
+                + sales_cols
+                + prev_cols
+                + payment_cols
+                + ledger_cols
+            )
+            
+            preview_df = preview_df[new_order]
+            
             html_zone = build_daily_report_html(
                 report_day=dash_day,
                 retailer_table=preview_df,
@@ -3823,15 +3956,67 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
     row_h=42
     table_height=max(500,min(2000,120+rows*row_h))
 
+
     with st.form(form_key, clear_on_submit=False):
-        edited = st.data_editor(
-            draft_df,
-            width="stretch",
-            num_rows="fixed",
-            key=editor_key,
-            disabled=lock,
-            height=table_height
+        gb = GridOptionsBuilder.from_dataframe(draft_df)
+
+        # Global column settings
+        gb.configure_default_column(
+            editable=True,
+            sortable=False,
+            filter=False,
+            resizable=True,
+            minWidth=100
         )
+        # Freeze ID
+        gb.configure_column(
+            "ID",
+            pinned="left",
+            editable=False,
+            width=80
+        )
+        # Freeze Retailer with larger width
+        gb.configure_column(
+            "Retailer",
+            pinned="left",
+            editable=False,
+            minWidth=220,
+            maxWidth=350
+        )
+
+        # Numeric columns (milk quantities + payments)
+        for col in draft_df.columns:
+            if "₹" in col or col in cat_col_names:
+                gb.configure_column(col, type=["numericColumn"])
+
+        for col in draft_df.columns:
+            gb.configure_column(col, wrapHeaderText=True, autoHeaderHeight=True)
+
+        gb.configure_grid_options(
+            domLayout="normal",
+            suppressMovableColumns=True,
+            alwaysShowHorizontalScroll=True,
+            ensureDomOrder=True,
+            suppressColumnVirtualisation=True,
+            rowSelection="single",
+            suppressRowClickSelection=False,
+            headerHeight=42,
+            rowHeight=42
+        )
+
+        grid_options = gb.build()
+
+        grid = AgGrid(
+            draft_df,
+            gridOptions=grid_options,
+            update_mode=GridUpdateMode.MANUAL,
+            height=table_height,
+            fit_columns_on_grid_load=True,
+            allow_unsafe_jscode=True,
+            theme="streamlit"
+        )
+
+        edited = pd.DataFrame(grid["data"])
 
         do_save_all = st.form_submit_button("💾 Save (Retailers + Distributors + Wastage)", type="primary", disabled=lock)
 
@@ -3885,7 +4070,13 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
     preview["Total Ledger ₹"] = total_ledger_list
 
     ledger_cols = [c for c in ["Today Sales ₹", "Previous Ledger ₹", "Total Ledger ₹"] if c in preview.columns]
-    ordered_preview_cols = [c for c in ["ID", "Retailer"] if c in preview.columns] + cat_col_names + ledger_cols + pay_cols
+    ordered_preview_cols = (
+        [c for c in ["ID", "Retailer"] if c in preview.columns]
+        + cat_col_names
+        + ["Today Sales ₹", "Previous Ledger ₹"]
+        + pay_cols
+        + ["Total Ledger ₹"]
+    )
     extras = [c for c in preview.columns if c not in ordered_preview_cols]
     preview = preview[ordered_preview_cols + extras]
 
@@ -4798,80 +4989,113 @@ elif menu == "🏪 Retailers":
                 except Exception as e:
                     st.error(f"Failed to save Main book retailers: {e}")
 
-# ================== PRICE MANAGEMENT ==================
 elif menu == "💰 Price Management":
-    st.header("💰 Price Management (Global + Retailer Override)")
-    st.info("Reminder: prices affect NEW entries. Old entries keep their stored rate (history is protected).")
 
-    tab1, tab2 = st.tabs(["➕ Set Price (Global or Retailer)", "✏️ View/Edit Prices"])
+    st.header("💰 Price Management")
 
-    with tab1:
-        if categories_active.empty:
-            st.warning("⚠️ Please add active categories first")
-            st.stop()
+    if retailers_active.empty:
+        st.warning("Please add retailers first")
+        st.stop()
 
-        scope = st.radio("Price Type", ["🌍 Global Default (All Retailers)", "🏪 Specific Retailer Override"], horizontal=True, key="price_scope")
+    if categories_active.empty:
+        st.warning("Please add categories first")
+        st.stop()
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if scope == "🏪 Specific Retailer Override":
-                if retailers_active.empty:
-                    st.warning("⚠️ Add active retailers first")
-                    st.stop()
-                retailer_name = st.selectbox("Retailer", retailers_active["name"].tolist(), key="price_retailer")
-            else:
-                retailer_name = None
-                st.info("This applies to ALL retailers (from effective date onward).")
+    eff_date = st.date_input(
+        "Effective Date",
+        date.today(),
+        key="price_matrix_date"
+    )
 
-        with col2:
-            category_name = st.selectbox("Milk Category", categories_active["name"].tolist(), key="price_category")
-            cat_row = categories_active.loc[categories_active["name"] == category_name].iloc[0]
-            cid = int(cat_row["category_id"])
+    retailer_list = retailers_active.sort_values("name")
+    category_list = categories_active.sort_values("name")
 
-        with col3:
-            fallback = float(cat_row.get("default_price", 0.0)) if pd.notna(cat_row.get("default_price", 0.0)) else 0.0
-            price_val = st.number_input("Set Price per Liter (₹)", min_value=0.0, step=0.5, format="%g", value=float(fallback), key="price_val")
+    matrix_rows = []
 
-        effective_date = st.date_input("Effective Date", date.today(), key="price_eff_date")
+    for _, r in retailer_list.iterrows():
 
-        if st.button("Save Price", type="primary", key="price_save_btn"):
-            if float(price_val) <= 0:
-                st.warning("Price must be > 0")
-            else:
-                if scope == "🏪 Specific Retailer Override":
-                    rid = int(retailers_active.loc[retailers_active["name"] == retailer_name, "retailer_id"].values[0])
-                    target_retailer_id = rid
-                else:
-                    target_retailer_id = GLOBAL_RETAILER_ID
+        rid = int(r["retailer_id"])
 
-                new_row = pd.DataFrame([{
-                    "retailer_id": int(target_retailer_id),
-                    "category_id": int(cid),
-                    "price": float(price_val),
-                    "effective_date": str(effective_date)
-                }])
-                
-                sb_insert_df(new_row, PRICES_FILE)
+        row = {
+            "Retailer": r["name"],
+            "retailer_id": rid
+        }
 
-                st.success("✅ Price saved. New entries on/after effective date will use it.")
-                st.rerun()
+        for _, c in category_list.iterrows():
 
-    with tab2:
-        if prices.empty:
-            st.info("No prices set yet.")
+            cid = int(c["category_id"])
+
+            p = get_price_for_date(
+                rid,
+                cid,
+                eff_date
+            )
+
+            if p is None:
+                p = float(c.get("default_price", 0.0) or 0.0)
+
+            row[c["name"]] = float(p)
+
+        matrix_rows.append(row)
+
+    price_matrix_df = pd.DataFrame(matrix_rows)
+
+    display_df = price_matrix_df.drop(columns=["retailer_id"])
+
+    st.subheader("Price Matrix")
+
+    edited_df = st.data_editor(
+        display_df,
+        use_container_width=True,
+        num_rows="fixed",
+        key="price_matrix_editor"
+    )
+
+    if st.button("💾 Save Price Changes", type="primary"):
+
+        updates = []
+
+        for i, row in edited_df.iterrows():
+
+            rid = int(price_matrix_df.iloc[i]["retailer_id"])
+
+            for _, c in category_list.iterrows():
+
+                cid = int(c["category_id"])
+                col = c["name"]
+
+                new_price = float(row[col] or 0.0)
+
+                old_price = get_price_for_date(
+                    rid,
+                    cid,
+                    eff_date
+                )
+
+                if old_price is None:
+                    old_price = 0.0
+
+                if float(new_price) != float(old_price):
+
+                    updates.append({
+                        "retailer_id": rid,
+                        "category_id": cid,
+                        "price": float(new_price),
+                        "effective_date": str(eff_date)
+                    })
+
+        if updates:
+
+            df_updates = pd.DataFrame(updates)
+
+            sb_insert_df(df_updates, PRICES_FILE)
+
+            st.success(f"{len(updates)} prices updated")
+
+            st.rerun()
+
         else:
-            view = prices.copy()
-            view["retailer_id"] = pd.to_numeric(view["retailer_id"], errors="coerce").fillna(GLOBAL_RETAILER_ID).astype(int)
-            view["category_id"] = pd.to_numeric(view["category_id"], errors="coerce").fillna(0).astype(int)
-
-            view = view.merge(categories[["category_id", "name"]], on="category_id", how="left").rename(columns={"name": "Category"})
-            retail_map = retailers[["retailer_id", "name"]] if not retailers.empty else pd.DataFrame(columns=["retailer_id", "name"])
-            view = view.merge(retail_map, on="retailer_id", how="left").rename(columns={"name": "Retailer"})
-            view.loc[view["retailer_id"] == GLOBAL_RETAILER_ID, "Retailer"] = "🌍 GLOBAL (All Retailers)"
-            view["effective_date"] = pd.to_datetime(view["effective_date"], errors="coerce").dt.strftime("%Y-%m-%d")
-            view = view.sort_values(["retailer_id", "category_id", "effective_date"], ascending=[True, True, False])
-            st.dataframe(view[["price_id", "Retailer", "Category", "price", "effective_date"]], width="stretch")
-
+            st.info("No changes detected")
 # ================== LEDGER ==================
 elif menu == "📒 Ledger":
     st.header(f"📒 Ledger (Grid View) — {selected_zone}")
