@@ -3845,7 +3845,35 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
     affected_rids = (st.session_state["daily_meta"].get(ctx, {}) or {}).get("affected_rids", [])
 
     # ---- Column order: ID, Retailer, Categories, Payments ----
-    draft_df = st.session_state["daily_drafts"][ctx].copy()
+    # Ensure daily draft storage exists
+    st.session_state.setdefault("daily_drafts", {})
+
+    draft_df = st.session_state["daily_drafts"].get(ctx)
+
+    # If no draft exists, build it from retailer master
+    if draft_df is None or draft_df.empty:
+
+        base_df = retailers.copy()
+  
+        base_df = base_df[["retailer_id", "name"]].rename(
+            columns={
+                "retailer_id": "ID",
+                "name": "Retailer"
+            }
+        )
+   
+        # Add category columns
+        for c in categories["category_id"]:
+            base_df[f"CID:{int(c)}"] = 0.0
+
+        # Add payment columns
+        base_df["CASH ₹"] = 0.0
+        base_df["UPI ₹"] = 0.0
+        base_df["CHEQUE ₹"] = 0.0
+
+        draft_df = base_df.copy()
+
+        st.session_state["daily_drafts"][ctx] = draft_df
     cat_col_names = [m["col"] for m in cat_cols if m.get("col") in draft_df.columns]
     pay_cols = [f"{m} ₹" for m in PAYMENT_MODES if f"{m} ₹" in draft_df.columns]
 
