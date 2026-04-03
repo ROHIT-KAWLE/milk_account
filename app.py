@@ -3949,6 +3949,19 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
     with st.form(form_key, clear_on_submit=False):
         gb = GridOptionsBuilder.from_dataframe(draft_df)
 
+        # Force numeric editor so tablets show numeric keyboard
+        numeric_cols = cat_col_names + pay_cols
+
+        for col in numeric_cols:
+            if col in draft_df.columns:
+                gb.configure_column(
+                    col,
+                    type=["numericColumn"],
+                    editable=True,
+                    valueParser="Number(newValue)",
+                    cellEditor="agNumberCellEditor"
+                )
+
         # Global column settings
         gb.configure_default_column(
             editable=True,
