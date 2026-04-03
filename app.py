@@ -3986,7 +3986,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             sortable=False,
             filter=False,
             resizable=True,
-            minWidth=100,
+            minWidth=60,
             singleClickEdit=True
         )
         # Freeze ID
@@ -4027,6 +4027,13 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
         )
 
         grid_options = gb.build()
+        grid_options["onGridReady"] = JsCode("""
+        function(params) {
+            setTimeout(function() {
+                params.columnApi.autoSizeAllColumns();
+            }, 200);
+        }
+                                             """)
 
         
 
