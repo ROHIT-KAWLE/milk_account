@@ -3959,7 +3959,15 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
                     type=["numericColumn"],
                     editable=True,
                     valueParser="Number(newValue)",
-                    cellEditor="agNumberCellEditor"
+                    cellEditor="agNumberCellEditor",
+                    cellEditorParams={
+                        "precision":2,
+                        "step":0.25,
+                        "min":0,
+                        "inputType": "number"
+                        
+                    },
+                    cellEditorPopup=False
                 )
 
         # Global column settings
@@ -3968,7 +3976,8 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             sortable=False,
             filter=False,
             resizable=True,
-            minWidth=100
+            minWidth=100,
+            singleClickEdit=True
         )
         # Freeze ID
         gb.configure_column(
@@ -3998,21 +4007,26 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             domLayout="normal",
             suppressMovableColumns=True,
             alwaysShowHorizontalScroll=True,
-     
             ensureDomOrder=True,
-            suppressColumnVirtualisation=True,
             rowSelection="single",
             suppressRowClickSelection=False,
             headerHeight=42,
-            rowHeight=42
+            rowHeight=42,
+            singleClickEdit=True,
+            stopEditingWhenCellsLoseFocus=True,
+            enterMovesDown=True,
+            enterMovesDownAfterEdit=True,
+            suppressClickEdit=False
         )
 
         grid_options = gb.build()
 
+        
+
         grid = AgGrid(
             draft_df,
             gridOptions=grid_options,
-            update_on=["cellValueChanged"],
+            update_mode="MODEL_CHANGED",
             height=table_height,
             fit_columns_on_grid_load=True,
             allow_unsafe_jscode=True,
