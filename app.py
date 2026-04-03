@@ -4027,13 +4027,20 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
         )
 
         grid_options = gb.build()
-        grid_options["onGridReady"] = JsCode("""
+        grid_options["onFirstDataRendered"] = JsCode("""
         function(params) {
             setTimeout(function() {
-                params.columnApi.autoSizeAllColumns();
-            }, 200);
+
+                const allColumnIds = [];
+                params.columnApi.getColumns().forEach(function(column) {
+                    allColumnIds.push(column.getId());
+                });
+
+                params.columnApi.autoSizeColumns(allColumnIds, false);
+
+            }, 300);
         }
-                                             """)
+        """)
 
         
 
