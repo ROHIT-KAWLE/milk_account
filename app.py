@@ -6,7 +6,7 @@ import zipfile
 import io
 import plotly.express as px
 from supabase import create_client
-from st_aggrid import AgGrid, GridOptionsBuilder
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 
 
 
@@ -3942,8 +3942,8 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
     editor_key = f"daily_sheet_editor_{ctx}_{st.session_state.get('data_version', 0)}"
 
     rows = len(draft_df) if draft_df is not None else 1
-    row_h=42
-    table_height=max(500,min(2000,120+rows*row_h))
+    row_h = 42
+    table_height = min(900, 120 + rows * row_h)
 
 
     with st.form(form_key, clear_on_submit=False):
@@ -3952,22 +3952,32 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
         # Force numeric editor so tablets show numeric keyboard
         numeric_cols = cat_col_names + pay_cols
 
+
+
+        numeric_editor = JsCode("""
+        class NumericEditor {
+            init(params) {
+                this.eInput = document.createElement('input');
+                this.eInput.type = 'number';
+                this.eInput.step = '0.25';
+                this.eInput.min = '0';
+                this.eInput.style.width = '100%';
+                this.eInput.value = params.value || 0;
+            }
+            getGui() { return this.eInput; }
+            afterGuiAttached() { this.eInput.focus(); this.eInput.select(); }
+            getValue() { return parseFloat(this.eInput.value) || 0; }
+        }
+                                """)
+
         for col in numeric_cols:
             if col in draft_df.columns:
+                
                 gb.configure_column(
                     col,
-                    type=["numericColumn"],
                     editable=True,
                     valueParser="Number(newValue)",
-                    cellEditor="agNumberCellEditor",
-                    cellEditorParams={
-                        "precision":2,
-                        "step":0.25,
-                        "min":0,
-                        "inputType": "number"
-                        
-                    },
-                    cellEditorPopup=False
+                    cellEditor=numeric_editor
                 )
 
         # Global column settings
@@ -3995,10 +4005,6 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             maxWidth=350
         )
 
-        # Numeric columns (milk quantities + payments)
-        for col in draft_df.columns:
-            if "₹" in col or col in cat_col_names:
-                gb.configure_column(col, type=["numericColumn"])
 
         for col in draft_df.columns:
             gb.configure_column(col, wrapHeaderText=True, autoHeaderHeight=True)
@@ -4007,6 +4013,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             domLayout="normal",
             suppressMovableColumns=True,
             alwaysShowHorizontalScroll=True,
+            alwaysShowVerticalScroll=True,
             ensureDomOrder=True,
             rowSelection="single",
             suppressRowClickSelection=False,
@@ -4028,9 +4035,10 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             gridOptions=grid_options,
             update_mode="MODEL_CHANGED",
             height=table_height,
-            fit_columns_on_grid_load=True,
+            fit_columns_on_grid_load=False,
             allow_unsafe_jscode=True,
-            theme="streamlit"
+            theme="streamlit",
+            use_container_width=True
         )
 
         edited = pd.DataFrame(grid["data"])
