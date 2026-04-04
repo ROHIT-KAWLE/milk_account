@@ -4120,10 +4120,81 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
     preview = preview[ordered_preview_cols + extras]
 
     st.subheader("📌 Retailer Preview")
-    rows2 = len(draft_df) if draft_df is not None else 1
-    row_h=42
-    preview_height=max(500,min(2000,120+rows2*row_h))
-    st.dataframe(df_for_display(preview), width="stretch",height=preview_height)
+
+    rows2 = len(preview) if preview is not None else 1
+    row_h = 42
+    preview_height = max(500, min(2000, 120 + rows2 * row_h))
+
+    preview_df_display = df_for_display(preview)
+
+    gb_preview = GridOptionsBuilder.from_dataframe(preview_df_display)
+
+    # Make preview read-only
+    gb_preview.configure_default_column(
+        editable=False,
+        sortable=False,
+        filter=False,
+        resizable=True,
+        minWidth=60
+    )
+
+    # Freeze ID
+    gb_preview.configure_column(
+        "ID",
+        pinned="left",
+        editable=False,
+        width=80
+    )
+
+    # Freeze Retailer
+    gb_preview.configure_column(
+        "Retailer",
+        pinned="left",
+        editable=False,
+        minWidth=220,
+        maxWidth=350
+    )
+
+    # Header wrapping like entry table
+    for col in preview_df_display.columns:
+        gb_preview.configure_column(col, wrapHeaderText=True, autoHeaderHeight=True)
+
+    gb_preview.configure_grid_options(
+        domLayout="normal",
+        suppressMovableColumns=True,
+        alwaysShowHorizontalScroll=True,
+        alwaysShowVerticalScroll=True,
+        headerHeight=42,
+        rowHeight=42
+    )
+
+    preview_grid_options = gb_preview.build()
+
+    preview_grid_options["onFirstDataRendered"] = JsCode("""
+    function(params) {
+        setTimeout(function() {
+
+            const allColumnIds = [];
+            params.columnApi.getColumns().forEach(function(column) {
+                allColumnIds.push(column.getId());
+            });
+
+            params.columnApi.autoSizeColumns(allColumnIds, false);
+
+        }, 300);
+    }
+    """)
+
+    AgGrid(
+        preview_df_display,
+        gridOptions=preview_grid_options,
+        update_mode="NO_UPDATE",
+        height=preview_height,
+        fit_columns_on_grid_load=False,
+        allow_unsafe_jscode=True,
+        theme="streamlit",
+        use_container_width=True
+    )
 
     # ---------------- GRAND TOTALS (Categories + Payments) ----------------
     # Computed from the in-memory preview derived from current draft for (date, zone).
