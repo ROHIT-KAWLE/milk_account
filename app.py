@@ -1624,8 +1624,7 @@ th {{
 
 <div class="header">
 <h2>RANJIT BHIMRAO KAWLE MILK</h2>
-<h4>Daily Business Summary</h4>
-<p>Date: {report_day}</p>
+<h4>Daily Business Summary | Date: {report_day}</h4>
 </div>
 
 {cards_html}
