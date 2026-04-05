@@ -3111,10 +3111,7 @@ if menu == "📊 Dashboard":
         zone_pivot["TOTAL (L)"] = zone_pivot.sum(axis=1)
 
     # ---- Main book retailer rows ----
-    main_ids = set(get_main_retailer_ids())
-    if not rmap.empty:
-        main_ids |= set(rmap.loc[rmap["zone"] == _norm_zone(MAIN_ZONE), "retailer_id"].astype(int).tolist())
-
+    main_ids = set()
     main_pivot = pd.DataFrame()
     main_sales_map = {}
     main_pay_map = {}
@@ -3208,12 +3205,7 @@ if menu == "📊 Dashboard":
     if (not main_pivot.empty) and frames:
         frames.append(pd.DataFrame([{c: "–" for c in out_cols}]))
 
-    if not main_pivot.empty:
-        mdf = main_pivot.copy().sort_index()
-        mdf["Payment (₹)"] = [float(main_pay_map.get(idx, 0.0)) for idx in mdf.index]
-        mdf.insert(0, "Name", mdf.index.astype(str))
-        mdf = mdf.reset_index(drop=True)
-        frames.append(mdf[out_cols])
+    pass
 
     if not zone_pivot.empty:
         grand = {"Name": "GRAND TOTAL"}
