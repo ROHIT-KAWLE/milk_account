@@ -1630,10 +1630,6 @@ th {{
 {cards_html}
 
 <div class="section">
-{df_to_html(retailer_table, "Retailers / Zones Summary")}
-</div>
-
-<div class="section">
 {df_to_html(retailer_pay_modes, "Payments by Mode")}
 </div>
 
