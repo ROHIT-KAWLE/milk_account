@@ -1624,10 +1624,15 @@ th {{
 
 <div class="header">
 <h2>RANJIT BHIMRAO KAWLE MILK</h2>
-<h4>Daily Business Summary | Date: {report_day}</h4>
+<h4>Daily Business Summary</h4>
+<p>Date: {report_day}</p>
 </div>
 
 {cards_html}
+
+<div class="section">
+{df_to_html(retailer_table, "Retailers / Zones Summary")}
+</div>
 
 <div class="section">
 {df_to_html(retailer_pay_modes, "Payments by Mode")}
