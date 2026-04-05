@@ -1274,7 +1274,7 @@ def build_distributor_bill_html(
     pay_mode_totals: pd.DataFrame,
     cat_names: list[str],
 ) -> str:
-    shop_name = "JYOTIRLING MILK SUPPLIER"
+    shop_name = "RANJIT BHIMRAO KAWLE MILK SUPPLIER"
 
     def esc(s: str) -> str:
         return (
@@ -1623,7 +1623,7 @@ th {{
 </div>
 
 <div class="header">
-<h2>RANKIT BHIMRAO KAWLE MILK</h2>
+<h2>RANJIT BHIMRAO KAWLE MILK</h2>
 <h4>Daily Business Summary</h4>
 <p>Date: {report_day}</p>
 </div>
@@ -2697,7 +2697,7 @@ def build_bill_html(
     cat_names: list[str],
     opening_due: float,
 ) -> str:
-    shop_name = "JYOTIRLING MILK SUPPLIER"
+    shop_name = "RANJIT BHIMRAO KAWLE MILK SUPPLIER"
     cust = display_or_dash(retailer_row.get("name"))
     zone = display_or_dash(retailer_row.get("zone"))
     contact = display_or_dash(retailer_row.get("contact"))
@@ -2918,7 +2918,7 @@ entries_z = filter_by_zone(entries.copy(), "retailer_id", selected_zone) if not 
 payments_z = filter_by_zone(payments.copy(), "retailer_id", selected_zone) if not payments.empty else pd.DataFrame(columns=payments.columns)
 
 # ================== UI ==================
-st.title("🥛 JYOTIRLING MILK SUPPLIER")
+st.title("🥛 RANJIT BHIMRAO KAWLE MILK SUPPLIER")
 if "css_loaded" not in st.session_state:
     st.session_state["css_loaded"] = True
     st.markdown(f"""
@@ -2932,7 +2932,7 @@ if "css_loaded" not in st.session_state:
   backdrop-filter: blur(10px);
 ">
   <div>
-    <div style="font-size:28px; font-weight:950; letter-spacing:-0.02em;">🥛 JYOTIRLING MILK SUPPLIER</div>
+    <div style="font-size:28px; font-weight:950; letter-spacing:-0.02em;">🥛 RANJIT BHIMRAO KAWLE MILK SUPPLIER</div>
     <div style="color:#64748B; font-weight:750; margin-top:2px;">Milk Accounting Pro • Clean ledgers • Fast billing</div>
   </div>
   <div style="text-align:right;">
