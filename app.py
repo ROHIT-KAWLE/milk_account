@@ -406,7 +406,19 @@ def load_all_data(data_version):
         CSV_SCHEMAS[EXPENSES_FILE],
     )
 
-    return data
+    return (
+        data["retailers"],
+        data["categories"],
+        data["prices"],
+        data["entries"],
+        data["payments"],
+        sb_fetch_all(DISTRIBUTORS_FILE, CSV_SCHEMAS[DISTRIBUTORS_FILE]),
+        data["dist_purchases"],
+        data["dist_payments"],
+        sb_fetch_all(DISTRIBUTOR_CATEGORY_MAP_FILE, CSV_SCHEMAS[DISTRIBUTOR_CATEGORY_MAP_FILE]),
+        data["wastage"],
+        data["expenses"],
+    )
 
 
 @st.cache_data(show_spinner=False)
@@ -525,20 +537,8 @@ def df_for_display(df: pd.DataFrame) -> pd.DataFrame:
 
     return out
 
-def sb_fetch_all(path: str, cols="*", page_size: int = 5000, max_retries: int = 5):
-
+def sb_fetch_all(table: str, cols="*", page_size: int = 5000, max_retries: int = 5):
     sb = get_sb()
-
-    # Convert file path to actual Supabase table
-    if path in FILE_TO_TABLE:
-        table, _ = FILE_TO_TABLE[path]
-    else:
-        table = path
-
-    # Convert column list to string
-    if isinstance(cols, list):
-        cols = ",".join(cols)
-
     out = []
     offset = 0
 
@@ -551,17 +551,20 @@ def sb_fetch_all(path: str, cols="*", page_size: int = 5000, max_retries: int = 
                 out.extend(batch)
 
                 if len(batch) < page_size:
-                    return pd.DataFrame(out)
+                    return out
 
                 offset += page_size
-                break
+                last_exc = None
+                break  # success, exit retry loop
 
             except Exception as e:
                 last_exc = e
-                time.sleep(0.05 * attempt)
+                time.sleep(0.05 * attempt)  # small backoff
 
         if last_exc is not None:
             raise last_exc
+
+
 @st.cache_data(show_spinner=False)
 def cached_groupby_sum(df, cols, value, data_version):
 
