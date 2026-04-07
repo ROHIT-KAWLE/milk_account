@@ -184,6 +184,7 @@ if st.sidebar.button("🔌 Test DB Connection"):
 
 # ================== CACHE INVALIDATION (PERFORMANCE) ==================
 st.session_state.setdefault("data_version", 0)
+st.session_state.setdefault("daily_save_lock", False)
 def invalidate_data_cache():
 
     st.session_state["data_version"] = (
@@ -379,8 +380,8 @@ def load_all_data(data_version):
 
     data = {}
 
-    data["entries"] = sb_fetch_all(ENTRIES_FILE, CSV_SCHEMAS[ENTRIES_FILE])
-    data["payments"] = sb_fetch_all(PAYMENTS_FILE, CSV_SCHEMAS[PAYMENTS_FILE])
+    data["entries"] = pd.DataFrame(columns=CSV_SCHEMAS[ENTRIES_FILE])
+    data["payments"] = pd.DataFrame(columns=CSV_SCHEMAS[PAYMENTS_FILE])
     data["retailers"] = sb_fetch_all(RETAILERS_FILE, CSV_SCHEMAS[RETAILERS_FILE])
     data["categories"] = sb_fetch_all(CATEGORIES_FILE, CSV_SCHEMAS[CATEGORIES_FILE])
     data["prices"] = sb_fetch_all(PRICES_FILE, CSV_SCHEMAS[PRICES_FILE])
@@ -885,11 +886,6 @@ def sb_insert_df(df: object, path: str) -> None:
             df.loc[mask, pk] = range(next_id, next_id + int(mask.sum()))
 
 
-    # Accept dict / list[dict] input (some call sites build a single-row dict)
-    if isinstance(df, dict):
-        df = pd.DataFrame([df])
-    elif isinstance(df, list) and df and isinstance(df[0], dict):
-        df = pd.DataFrame(df)
 
     df = _prepare_df_for_write(df, path)
 
@@ -915,12 +911,11 @@ def sb_insert_df(df: object, path: str) -> None:
         if df[pk].isna().any():
             raise RuntimeError(f"{table}: mixed NULL/non-NULL primary keys while inserting")
 
-        for i in range(0, len(records), 1000):
+        for i in range(0, len(records), 500):
             sb.table(table).insert(records[i:i+500]).execute()
 
     # Persist snapshot + refresh caches
     safe_write_csv(df, path, allow_empty=False)
-    invalidate_data_cache()
 
 
 def sb_delete_by_pk(table: str, pk: str, ids: list[int], chunk: int = 1000) -> None:
@@ -930,8 +925,6 @@ def sb_delete_by_pk(table: str, pk: str, ids: list[int], chunk: int = 1000) -> N
         return
     for i in range(0, len(ids), chunk):
         sb.table(table).delete().in_(pk, ids[i:i+chunk]).execute()
-
-    invalidate_data_cache()
 
 
 
@@ -966,7 +959,6 @@ def sb_delete_where(table: str, filters: list[tuple], in_chunk: int = 500) -> No
 
     if not in_filters:
         base.execute()
-        invalidate_data_cache()
         return
 
     first_col, first_vals = in_filters[0]
@@ -978,7 +970,6 @@ def sb_delete_where(table: str, filters: list[tuple], in_chunk: int = 500) -> No
             q = q.in_(col, vals)
         q.execute()
 
-    invalidate_data_cache()
 
 def safe_write_csv(df: pd.DataFrame, path: str, allow_empty: bool = False) -> None:
     """
@@ -1008,7 +999,7 @@ def safe_write_csv(df: pd.DataFrame, path: str, allow_empty: bool = False) -> No
         chunk = 500
         for i in range(0, len(records), chunk):
             sb.table(table).insert(records[i:i+chunk]).execute()
-        invalidate_data_cache()
+    
         return
 
     # Mixed NULL/non-NULL PK is dangerous (can create duplicates).
@@ -1028,7 +1019,6 @@ def safe_write_csv(df: pd.DataFrame, path: str, allow_empty: bool = False) -> No
     for i in range(0, len(records), chunk):
         sb.table(table).upsert(records[i:i+chunk], on_conflict=pk).execute()
 
-    invalidate_data_cache()
 
 
 def safe_write_two_csvs(df1: pd.DataFrame, path1: str, df2: pd.DataFrame, path2: str) -> None:
@@ -1673,7 +1663,7 @@ def load_and_migrate_data():
     prices["effective_date"] = eff.fillna(date.today()).astype(str)
     prices = prices.loc[prices["price_id"] > 0].copy()
 
-    entries = safe_read_csv(ENTRIES_FILE, CSV_SCHEMAS[ENTRIES_FILE])
+    entries = pd.DataFrame(columns=CSV_SCHEMAS[ENTRIES_FILE])
     entries["entry_id"] = pd.to_numeric(entries["entry_id"], errors="coerce").fillna(0).astype(int)
     entries["retailer_id"] = pd.to_numeric(entries["retailer_id"], errors="coerce").fillna(0).astype(int)
     entries["category_id"] = pd.to_numeric(entries["category_id"], errors="coerce").fillna(0).astype(int)
@@ -1682,7 +1672,7 @@ def load_and_migrate_data():
     entries["amount"] = pd.to_numeric(entries["amount"], errors="coerce").fillna(0.0).astype(float)
     entries = entries.loc[entries["entry_id"] > 0].copy()
 
-    payments = safe_read_csv(PAYMENTS_FILE, CSV_SCHEMAS[PAYMENTS_FILE])
+    payments = pd.DataFrame(columns=CSV_SCHEMAS[PAYMENTS_FILE])
     payments["payment_id"] = pd.to_numeric(payments["payment_id"], errors="coerce").fillna(0).astype(int)
     payments["retailer_id"] = pd.to_numeric(payments["retailer_id"], errors="coerce").fillna(0).astype(int)
     payments["amount"] = pd.to_numeric(payments["amount"], errors="coerce").fillna(0.0).astype(float)
@@ -1739,11 +1729,10 @@ def load_and_migrate_data():
 
     return retailers, categories, prices, entries, payments, distributors, dist_purchases, dist_payments, dist_cat_map, wastage, expenses
 
-st.session_state.setdefault("data_version", 0)
 
 if "all_tables" not in st.session_state or st.session_state.get("last_version") != st.session_state["data_version"]:
 
-    data = load_and_migrate_data_cached(st.session_state["data_version"])
+    data = load_all_data(st.session_state["data_version"])
 
     (
         retailers,
@@ -4528,7 +4517,13 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
     # ---------------- SINGLE SAVE ----------------
     st.divider()
     if do_save_all:
+
+        if st.session_state.get("daily_save_lock", False):
+            st.warning("Save already in progress.")
+            st.stop()
+
         st.session_state["daily_save_lock"] = True
+
         try:
             # Block wipe-out: DB has data but submitted grid is all zeros
             db_e_chk = _day_entries_for_zone(posting_date, posting_zone)
@@ -4638,9 +4633,11 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             st.rerun()
 
         except Exception as e:
-            st.session_state["daily_save_lock"] = False
             st.error(f"❌ Save failed (Retailers are rollback-protected; distributor/wastage may need review).\n\n{e}")
             st.stop()
+        
+        finally:
+            st.session_state["daily_save_lock"] = False
 elif menu == "📅 Date + Zone View":
     st.header("📅 View All Data for a Specific Date + Zone")
 
