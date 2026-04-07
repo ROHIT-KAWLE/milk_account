@@ -525,10 +525,17 @@ def df_for_display(df: pd.DataFrame) -> pd.DataFrame:
 
     return out
 
-def sb_fetch_all(table: str, cols="*", page_size: int = 5000, max_retries: int = 5):
+def sb_fetch_all(path: str, cols="*", page_size: int = 5000, max_retries: int = 5):
 
     sb = get_sb()
 
+    # Convert file path to actual Supabase table
+    if path in FILE_TO_TABLE:
+        table, _ = FILE_TO_TABLE[path]
+    else:
+        table = path
+
+    # Convert column list to string
     if isinstance(cols, list):
         cols = ",".join(cols)
 
@@ -544,7 +551,7 @@ def sb_fetch_all(table: str, cols="*", page_size: int = 5000, max_retries: int =
                 out.extend(batch)
 
                 if len(batch) < page_size:
-                    return out
+                    return pd.DataFrame(out)
 
                 offset += page_size
                 break
@@ -555,7 +562,6 @@ def sb_fetch_all(table: str, cols="*", page_size: int = 5000, max_retries: int =
 
         if last_exc is not None:
             raise last_exc
-
 @st.cache_data(show_spinner=False)
 def cached_groupby_sum(df, cols, value, data_version):
 
