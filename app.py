@@ -537,33 +537,50 @@ def df_for_display(df: pd.DataFrame) -> pd.DataFrame:
 
     return out
 
-def sb_fetch_all(table: str, cols="*", page_size: int = 5000, max_retries: int = 5):
+def sb_fetch_all(path: str, cols="*", page_size: int = 5000, max_retries: int = 5):
+
     sb = get_sb()
+
+    # convert CSV path -> Supabase table
+    if path in FILE_TO_TABLE:
+        table, _ = FILE_TO_TABLE[path]
+    else:
+        table = path
+
+    # convert column list to comma string
+    if isinstance(cols, list):
+        cols = ",".join(cols)
+
     out = []
     offset = 0
 
     while True:
         last_exc = None
+
         for attempt in range(1, max_retries + 1):
             try:
-                resp = sb.table(table).select(cols).range(offset, offset + page_size - 1).execute()
+                resp = (
+                    sb.table(table)
+                    .select(cols)
+                    .range(offset, offset + page_size - 1)
+                    .execute()
+                )
+
                 batch = resp.data or []
                 out.extend(batch)
 
                 if len(batch) < page_size:
-                    return out
+                    return pd.DataFrame(out)
 
                 offset += page_size
-                last_exc = None
-                break  # success, exit retry loop
+                break
 
             except Exception as e:
                 last_exc = e
-                time.sleep(0.05 * attempt)  # small backoff
+                time.sleep(0.05 * attempt)
 
         if last_exc is not None:
             raise last_exc
-
 
 @st.cache_data(show_spinner=False)
 def cached_groupby_sum(df, cols, value, data_version):
