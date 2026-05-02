@@ -2904,7 +2904,8 @@ if menu == "📊 Dashboard":
         grand["Payment (₹)"] = float(val)
 
         # --- APPEND ---
-        frames.append(pd.DataFrame([grand])[out_cols])    if not frames:
+        frames.append(pd.DataFrame([grand])[out_cols])    
+    if not frames:
         st.info("No entries/payments found for this date.")
     else:
         out = pd.concat(frames, ignore_index=True)
