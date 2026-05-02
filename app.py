@@ -2871,25 +2871,40 @@ if menu == "📊 Dashboard":
         # --- CATEGORY TOTALS ---
         for c in cat_names:
             if c in zone_pivot.columns:
-                grand[c] = float(zone_pivot[c].fillna(0).sum())
+                val = zone_pivot[c]
+
+                if isinstance(val, pd.DataFrame):
+                    val = val.fillna(0).to_numpy().sum()
+                else:
+                    val = val.fillna(0).sum()
+
+                grand[c] = float(val)
             else:
                 grand[c] = 0.0
 
         # --- TOTAL MILK ---
         if "TOTAL (L)" in zone_pivot.columns:
-            grand["TOTAL (L)"] = float(zone_pivot["TOTAL (L)"].fillna(0).sum())
+            val = zone_pivot["TOTAL (L)"]
+
+            if isinstance(val, pd.DataFrame):
+                val = val.fillna(0).to_numpy().sum()
+            else:
+                val = val.fillna(0).sum()
+
+            grand["TOTAL (L)"] = float(val)
         else:
             grand["TOTAL (L)"] = 0.0
 
         # --- PAYMENT ---
-        if isinstance(zone_pay, (pd.Series, pd.DataFrame)):
-            grand["Payment (₹)"] = float(pd.to_numeric(zone_pay, errors="coerce").fillna(0).sum())
-        else:
-            grand["Payment (₹)"] = float(pd.to_numeric(zone_pay, errors="coerce") or 0.0)
+        val = pd.to_numeric(zone_pay, errors="coerce")
+
+        if isinstance(val, (pd.Series, pd.DataFrame)):
+            val = val.fillna(0).to_numpy().sum()
+
+        grand["Payment (₹)"] = float(val)
 
         # --- APPEND ---
-        frames.append(pd.DataFrame([grand])[out_cols])
-    if not frames:
+        frames.append(pd.DataFrame([grand])[out_cols])    if not frames:
         st.info("No entries/payments found for this date.")
     else:
         out = pd.concat(frames, ignore_index=True)
