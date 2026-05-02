@@ -439,8 +439,6 @@ def build_entries_view_cached(
 
     return build_entries_view(
         df,
-        retailers,
-        categories,
         want_milk_type_col=want_milk_type_col,
     )
 
@@ -5916,8 +5914,8 @@ elif menu == "🛡️ Data Health & Backup":
     if st.button("Export Range CSV"):
 
         data = build_fast_report(
-            start_date,
-            end_date,
+            b_start,
+            b_end,
             retailers,
             categories,
             entries,
