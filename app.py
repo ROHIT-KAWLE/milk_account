@@ -2868,11 +2868,19 @@ if menu == "📊 Dashboard":
     if not zone_pivot.empty:
         grand = {"Name": "GRAND TOTAL"}
         for c in cat_names:
-            grand[c] = float(pd.to_numeric(zone_pivot.get(c, 0.0), errors="coerce").fillna(0.0).sum())
-        grand["TOTAL (L)"] = float(pd.to_numeric(zone_pivot.get("TOTAL (L)", 0.0), errors="coerce").fillna(0.0).sum())
-        grand["Payment (₹)"] = float(pd.to_numeric(zone_pay, errors="coerce").fillna(0.0).sum())
+            if c in zone_pivot.columns:
+                grand[c] = float(pd.to_numeric(zone_pivot[c], errors="coerce").fillna(0.0).sum())
+            else:
+                grand[c] = 0.0
+        grand["TOTAL (L)"] = (
+            float(pd.to_numeric(zone_pivot["TOTAL (L)"], errors="coerce").fillna(0.0).sum())
+            if "TOTAL (L)" in zone_pivot.columns else 0.0
+        )
+        grand["Payment (₹)"] = (
+            float(pd.to_numeric(zone_pay, errors="coerce").fillna(0.0).sum())
+            if not zone_pay.empty else 0.0
+        )
         frames.append(pd.DataFrame([grand])[out_cols])
-
     if not frames:
         st.info("No entries/payments found for this date.")
     else:
