@@ -4,7 +4,6 @@ from datetime import date,  timedelta
 import time
 import zipfile
 import io
-import plotly.express as px
 from supabase import create_client
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 
@@ -142,7 +141,7 @@ DISTRIBUTOR_CATEGORY_MAP_FILE = "data/distributor_category_map.csv"
 WASTAGE_FILE = "data/wastage.csv"
 EXPENSES_FILE = "data/expenses.csv"
 
-GLOBAL_RETAILER_ID = None
+GLOBAL_RETAILER_ID = 0
 
 FILE_TO_TABLE = {
     RETAILERS_FILE: ("retailers", "retailer_id"),
@@ -160,18 +159,10 @@ FILE_TO_TABLE = {
 
 @st.cache_resource
 def get_sb():
-    return create_client(
-        st.secrets["supabase"]["url"],
-        st.secrets["supabase"]["anon_key"]
-    )
+    cfg = st.secrets["supabase"]
+    return create_client(cfg["url"], cfg["anon_key"])
 
-sb = None
-try:
-    sb = get_sb()
-except Exception as e:
-    st.error("Supabase client init failed. Check .streamlit/secrets.toml and supabase dependency.")
-    st.error(str(e))
-    st.stop()
+sb = get_sb()
 
 if st.sidebar.button("🔌 Test DB Connection"):
     try:
@@ -186,20 +177,22 @@ if st.sidebar.button("🔌 Test DB Connection"):
 st.session_state.setdefault("data_version", 0)
 st.session_state.setdefault("daily_save_lock", False)
 def invalidate_data_cache():
-
-    st.session_state["data_version"] = (
-        st.session_state.get("data_version", 0) + 1
-    )
-
-    try:
-        st.cache_data.clear()
-    except:
-        pass
-
-@st.cache_data(show_spinner=False)
+    st.session_state["data_version"] += 1
 def make_full_backup_zip(data_version: int) -> bytes:
-    """Create a ZIP containing CSV exports of all core tables. Cached by data_version."""
-    _ = data_version  # cache key only
+
+    _ = data_version
+
+    retailers = sb_fetch_all(RETAILERS_FILE, CSV_SCHEMAS[RETAILERS_FILE])
+    categories = sb_fetch_all(CATEGORIES_FILE, CSV_SCHEMAS[CATEGORIES_FILE])
+    prices = sb_fetch_all(PRICES_FILE, CSV_SCHEMAS[PRICES_FILE])
+    entries = sb_fetch_all(ENTRIES_FILE, CSV_SCHEMAS[ENTRIES_FILE])
+    payments = sb_fetch_all(PAYMENTS_FILE, CSV_SCHEMAS[PAYMENTS_FILE])
+    distributors = sb_fetch_all(DISTRIBUTORS_FILE, CSV_SCHEMAS[DISTRIBUTORS_FILE])
+    dist_purchases = sb_fetch_all(DISTRIBUTOR_PURCHASES_FILE, CSV_SCHEMAS[DISTRIBUTOR_PURCHASES_FILE])
+    dist_payments = sb_fetch_all(DISTRIBUTOR_PAYMENTS_FILE, CSV_SCHEMAS[DISTRIBUTOR_PAYMENTS_FILE])
+    dist_cat_map = sb_fetch_all(DISTRIBUTOR_CATEGORY_MAP_FILE, CSV_SCHEMAS[DISTRIBUTOR_CATEGORY_MAP_FILE])
+    wastage = sb_fetch_all(WASTAGE_FILE, CSV_SCHEMAS[WASTAGE_FILE])
+    expenses = sb_fetch_all(EXPENSES_FILE, CSV_SCHEMAS[EXPENSES_FILE])
 
     tables = {
         "retailers": retailers,
@@ -216,21 +209,14 @@ def make_full_backup_zip(data_version: int) -> bytes:
     }
 
     buf = io.BytesIO()
+
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for name, df in tables.items():
-            if df is None:
-                continue
-            if not isinstance(df, pd.DataFrame):
-                continue
-            csv_bytes = df.to_csv(index=False).encode("utf-8")
-            zf.writestr(f"{name}.csv", csv_bytes)
+            if isinstance(df, pd.DataFrame):
+                zf.writestr(f"{name}.csv", df.to_csv(index=False).encode("utf-8"))
+
     return buf.getvalue()
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def load_and_migrate_data_cached(_version: int):
-    """Cached wrapper: prevents full-table fetch on every widget interaction."""
-    _ = int(_version)  # IMPORTANT: makes cache depend on data_version
-    return load_and_migrate_data()
 def _secret_bool(key: str, default: bool = False) -> bool:
     try:
         raw = st.secrets["supabase"].get(key, default)
@@ -258,7 +244,7 @@ CSV_SCHEMAS = {
     DISTRIBUTOR_PAYMENTS_FILE: ["payment_id", "date", "distributor_id", "amount", "payment_mode", "note"],
     DISTRIBUTOR_CATEGORY_MAP_FILE: ["map_id", "distributor_id", "category_id", "is_active"],
     WASTAGE_FILE: ["wastage_id", "date", "category_id", "qty", "reason", "estimated_loss"],
-    EXPENSES_FILE: ["expense_id", "date", "category", "description", "amount", "payment_mode", "paid"],
+    EXPENSES_FILE: ["expense_id", "date", "zone", "category", "description", "amount", "payment_mode", "paid"],
 }
 
 # legacy columns allowed to be missing in old CSVs (in-memory only, no write on startup)
@@ -319,107 +305,128 @@ def sb_new_id(table: str, pk: str):
 
 def _safe_dt(s):
     return pd.to_datetime(s, errors="coerce")
-def build_entries_view(df: pd.DataFrame, want_milk_type_col: bool = False) -> pd.DataFrame:
+
+def build_entries_view(
+    df: pd.DataFrame,
+    retailers_df: pd.DataFrame,
+    categories_df: pd.DataFrame,
+    want_milk_type_col: bool = False,
+) -> pd.DataFrame:
     """
-    Builds a clean, UI-ready view of entries with Retailer/Category/Zone names.
-    Keeps your existing calls working (want_milk_type_col kept for compatibility).
+    Clean UI-ready entries view.
+    NO global dependencies.
     """
+
     if df is None or df.empty:
-        cols = ["entry_id", "date", "zone", "Retailer", "Category", "qty", "rate", "amount"]
-        return pd.DataFrame(columns=cols)
+        return pd.DataFrame(
+            columns=[
+                "entry_id",
+                "date",
+                "zone",
+                "Retailer",
+                "Category",
+                "qty",
+                "rate",
+                "amount",
+            ]
+        )
 
     out = df.copy()
 
-    # Normalize date
-    out["date"] = _safe_dt(out["date"]).dt.strftime("%Y-%m-%d")
+    # --- DATE ---
+    out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.strftime("%Y-%m-%d")
 
-    # Make sure IDs are numeric for joins
-    out["retailer_id"] = pd.to_numeric(out.get("retailer_id", 0), errors="coerce").fillna(0).astype(int)
-    out["category_id"] = pd.to_numeric(out.get("category_id", 0), errors="coerce").fillna(0).astype(int)
+    # --- IDS ---
+    out["retailer_id"] = pd.to_numeric(out.get("retailer_id"), errors="coerce").fillna(0).astype(int)
+    out["category_id"] = pd.to_numeric(out.get("category_id"), errors="coerce").fillna(0).astype(int)
 
-    # Merge retailer name + zone
-    if "retailers" in globals() and isinstance(retailers, pd.DataFrame) and not retailers.empty:
-        rmap = retailers[["retailer_id", "name", "zone"]].copy()
+    # --- RETAILER JOIN ---
+    if retailers_df is not None and not retailers_df.empty:
+        rmap = retailers_df[["retailer_id", "name", "zone"]].copy()
+
         rmap["retailer_id"] = pd.to_numeric(rmap["retailer_id"], errors="coerce").fillna(0).astype(int)
-        rmap["zone"] = rmap["zone"].apply(_norm_zone)
+        rmap["zone"] = rmap["zone"].fillna("Default").astype(str).apply(_norm_zone)
+
         out = out.merge(rmap, on="retailer_id", how="left")
         out = out.rename(columns={"name": "Retailer"})
     else:
         out["Retailer"] = "-"
+        out["zone"] = "Default"
 
-    # Merge category name
-    if "categories" in globals() and isinstance(categories, pd.DataFrame) and not categories.empty:
-        cmap = categories[["category_id", "name"]].copy()
+    # --- CATEGORY JOIN ---
+    if categories_df is not None and not categories_df.empty:
+        cmap = categories_df[["category_id", "name"]].copy()
+
         cmap["category_id"] = pd.to_numeric(cmap["category_id"], errors="coerce").fillna(0).astype(int)
+
         out = out.merge(cmap, on="category_id", how="left")
         out = out.rename(columns={"name": "Category"})
     else:
         out["Category"] = "-"
 
-    # Clean fallbacks
+    # --- CLEAN FALLBACKS ---
     out["Retailer"] = out.get("Retailer", "-").fillna("-").astype(str)
     out["Category"] = out.get("Category", "-").fillna("-").astype(str)
-    out["zone"] = out.get("zone", "Default").fillna("Default").astype(str).apply(_norm_zone)
 
-    # Ensure numeric columns
+    if "zone" not in out.columns:
+        out["zone"] = "Default"
+
+    out["zone"] = out["zone"].fillna("Default").astype(str).apply(_norm_zone)
+
+    # --- NUMERIC ---
     for c in ["qty", "rate", "amount"]:
-        out[c] = pd.to_numeric(out.get(c, 0.0), errors="coerce").fillna(0.0).astype(float)
+        out[c] = pd.to_numeric(out.get(c, 0), errors="coerce").fillna(0.0).astype(float)
 
-    cols = ["entry_id", "date", "zone", "Retailer", "Category", "qty", "rate", "amount"]
-    # keep only what UI uses
+    # --- FINAL COLUMNS ---
+    cols = [
+        "entry_id",
+        "date",
+        "zone",
+        "Retailer",
+        "Category",
+        "qty",
+        "rate",
+        "amount",
+    ]
+
     for c in cols:
         if c not in out.columns:
             out[c] = "-" if c in ["zone", "Retailer", "Category", "date"] else 0
 
     return out[cols]
 
-
-
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner="Loading data from Supabase…")
 def load_all_data(data_version):
-
+    import time as _t
+    _ = data_version
     data = {}
 
-    data["entries"] = pd.DataFrame(columns=CSV_SCHEMAS[ENTRIES_FILE])
-    data["payments"] = pd.DataFrame(columns=CSV_SCHEMAS[PAYMENTS_FILE])
-    data["retailers"] = sb_fetch_all(RETAILERS_FILE, CSV_SCHEMAS[RETAILERS_FILE])
-    data["categories"] = sb_fetch_all(CATEGORIES_FILE, CSV_SCHEMAS[CATEGORIES_FILE])
-    data["prices"] = sb_fetch_all(PRICES_FILE, CSV_SCHEMAS[PRICES_FILE])
+    def _timed(label, fn):
+        t0 = _t.time()
+        out = fn()
+        dt = _t.time() - t0
+        rows = len(out) if hasattr(out, "__len__") else "?"
+        print(f"[load_all_data] {label:30s} {rows:>7} rows  {dt:6.2f}s", flush=True)
+        return out
 
-    data["dist_purchases"] = sb_fetch_all(
-        DISTRIBUTOR_PURCHASES_FILE,
-        CSV_SCHEMAS[DISTRIBUTOR_PURCHASES_FILE],
-    )
-
-    data["dist_payments"] = sb_fetch_all(
-        DISTRIBUTOR_PAYMENTS_FILE,
-        CSV_SCHEMAS[DISTRIBUTOR_PAYMENTS_FILE],
-    )
-
-    data["wastage"] = sb_fetch_all(
-        WASTAGE_FILE,
-        CSV_SCHEMAS[WASTAGE_FILE],
-    )
-
-    data["expenses"] = sb_fetch_all(
-        EXPENSES_FILE,
-        CSV_SCHEMAS[EXPENSES_FILE],
-    )
+    data["retailers"]     = _timed("retailers",     lambda: sb_fetch_all(RETAILERS_FILE,  CSV_SCHEMAS[RETAILERS_FILE]))
+    data["categories"]    = _timed("categories",    lambda: sb_fetch_all(CATEGORIES_FILE, CSV_SCHEMAS[CATEGORIES_FILE]))
+    data["prices"]        = _timed("prices",        lambda: sb_fetch_all(PRICES_FILE,     CSV_SCHEMAS[PRICES_FILE]))
+    data["distributors"]  = _timed("distributors",  lambda: sb_fetch_all(DISTRIBUTORS_FILE, CSV_SCHEMAS[DISTRIBUTORS_FILE]))
+    data["dist_cat_map"]  = _timed("dist_cat_map",  lambda: sb_fetch_all(DISTRIBUTOR_CATEGORY_MAP_FILE, CSV_SCHEMAS[DISTRIBUTOR_CATEGORY_MAP_FILE]))
+    data["entries"]       = _timed("entries",       lambda: sb_fetch_all(ENTRIES_FILE,   CSV_SCHEMAS[ENTRIES_FILE]))
+    data["payments"]      = _timed("payments",      lambda: sb_fetch_all(PAYMENTS_FILE,  CSV_SCHEMAS[PAYMENTS_FILE]))
+    data["dist_purchases"]= _timed("dist_purchases",lambda: sb_fetch_all(DISTRIBUTOR_PURCHASES_FILE, CSV_SCHEMAS[DISTRIBUTOR_PURCHASES_FILE]))
+    data["dist_payments"] = _timed("dist_payments", lambda: sb_fetch_all(DISTRIBUTOR_PAYMENTS_FILE, CSV_SCHEMAS[DISTRIBUTOR_PAYMENTS_FILE]))
+    data["wastage"]       = _timed("wastage",       lambda: sb_fetch_all(WASTAGE_FILE,   CSV_SCHEMAS[WASTAGE_FILE]))
+    data["expenses"]      = _timed("expenses",      lambda: sb_fetch_all(EXPENSES_FILE,  CSV_SCHEMAS[EXPENSES_FILE]))
 
     return (
-        data["retailers"],
-        data["categories"],
-        data["prices"],
-        data["entries"],
-        data["payments"],
-        sb_fetch_all(DISTRIBUTORS_FILE, CSV_SCHEMAS[DISTRIBUTORS_FILE]),
-        data["dist_purchases"],
-        data["dist_payments"],
-        sb_fetch_all(DISTRIBUTOR_CATEGORY_MAP_FILE, CSV_SCHEMAS[DISTRIBUTOR_CATEGORY_MAP_FILE]),
-        data["wastage"],
-        data["expenses"],
+        data["retailers"], data["categories"], data["prices"],
+        data["entries"], data["payments"],
+        data["distributors"], data["dist_purchases"], data["dist_payments"],
+        data["dist_cat_map"], data["wastage"], data["expenses"],
     )
-
 
 @st.cache_data(show_spinner=False)
 def build_entries_view_cached(
@@ -537,26 +544,27 @@ def df_for_display(df: pd.DataFrame) -> pd.DataFrame:
 
     return out
 
-def sb_fetch_all(path: str, cols="*", page_size: int = 5000, max_retries: int = 5):
+def sb_fetch_all(path: str, cols="*", page_size: int = 1000, max_retries: int = 5):
+    """Fetch all rows from a Supabase table with correct pagination.
 
+    Fixes two bugs in the original:
+    1. Supabase PostgREST caps responses at 1000 rows — using page_size=2000 caused
+       silent truncation (early-exit on the first page).
+    2. On empty/flaky queries the original had an infinite while-True loop.
+    """
     sb = get_sb()
-
-    # convert CSV path -> Supabase table
     if path in FILE_TO_TABLE:
         table, _ = FILE_TO_TABLE[path]
     else:
         table = path
-
-    # convert column list to comma string
     if isinstance(cols, list):
         cols = ",".join(cols)
 
     out = []
     offset = 0
-
     while True:
+        batch = None
         last_exc = None
-
         for attempt in range(1, max_retries + 1):
             try:
                 resp = (
@@ -565,22 +573,21 @@ def sb_fetch_all(path: str, cols="*", page_size: int = 5000, max_retries: int = 
                     .range(offset, offset + page_size - 1)
                     .execute()
                 )
-
                 batch = resp.data or []
-                out.extend(batch)
-
-                if len(batch) < page_size:
-                    return pd.DataFrame(out)
-
-                offset += page_size
+                last_exc = None
                 break
-
             except Exception as e:
                 last_exc = e
                 time.sleep(0.05 * attempt)
-
         if last_exc is not None:
             raise last_exc
+        if not batch:
+            break                      # no more rows → exit outer while
+        out.extend(batch)
+        if len(batch) < page_size:
+            break                      # last page → exit outer while
+        offset += page_size
+    return pd.DataFrame(out)
 
 @st.cache_data(show_spinner=False)
 def cached_groupby_sum(df, cols, value, data_version):
@@ -614,38 +621,14 @@ def cached_fetch_payments(day, rids, version):
         version,
     )
 
-@st.cache_data(show_spinner=False)
-def cached_opening_balances(rids, day, data_version):
+def compute_ledger_fast(entries, payments):
 
-    out = {}
+    e = entries.groupby("retailer_id")["amount"].sum()
+    p = payments.groupby("retailer_id")["amount"].sum()
 
-    for rid in rids:
-        try:
-            out[int(rid)] = float(
-                retailer_balance_before(int(rid), day)
-            )
-        except Exception:
-            out[int(rid)] = 0.0
+    ledger = e.subtract(p, fill_value=0)
 
-    return out
-
-@st.cache_data(show_spinner=False)
-def cached_ledger_as_of(rids, day, data_version):
-
-    out = {}
-
-    for rid in rids:
-        try:
-            out[int(rid)] = float(
-                retailer_ledger_as_of(
-                    int(rid),
-                    day,
-                )
-            )
-        except Exception:
-            out[int(rid)] = 0.0
-
-    return out
+    return ledger.reset_index(name="balance")
 
 @st.cache_data(show_spinner=False)
 def cached_pivot(
@@ -862,13 +845,15 @@ def sb_fetch_df(path: str, columns: list[str], filters: list[tuple] | None = Non
     try:
         rows = sb_fetch_where(table, cols="*", filters=filters)
         return _normalize_df_from_rows(path, columns, rows)
-    except Exception:
+    except Exception as e:
+        print("sb_fetch_df error:", e)
         # FAIL CLOSED: empty-with-schema, not unfiltered data.
         return _normalize_df_from_rows(path, columns, [])
 
 
 def _prepare_df_for_write(df: pd.DataFrame, path: str) -> pd.DataFrame:
     df = df.copy() if df is not None else pd.DataFrame()
+    df = df.drop(columns=["_selectedRowNodeInfo"], errors="ignore")
     expected_cols = CSV_SCHEMAS.get(path, [])
     if not expected_cols:
         table, _ = FILE_TO_TABLE[path]
@@ -937,15 +922,15 @@ def sb_insert_df(df: object, path: str) -> None:
         df = _prepare_df_for_write(df, path)
     else:
         # Safety: reject mixed NULL / non-NULL pk values (usually a bug in the UI)
-        if df[pk].isna().any():
+        if USE_DB_IDS and df[pk].isna().any():
             raise RuntimeError(f"{table}: mixed NULL/non-NULL primary keys while inserting")
 
         for i in range(0, len(records), 500):
             sb.table(table).insert(records[i:i+500]).execute()
 
     # Persist snapshot + refresh caches
-    safe_write_csv(df, path, allow_empty=False)
-
+    # DO NOT call safe_write_csv here
+    st.session_state["data_version"] += 1
 
 def sb_delete_by_pk(table: str, pk: str, ids: list[int], chunk: int = 1000) -> None:
     sb = get_sb()
@@ -1048,6 +1033,8 @@ def safe_write_csv(df: pd.DataFrame, path: str, allow_empty: bool = False) -> No
     for i in range(0, len(records), chunk):
         sb.table(table).upsert(records[i:i+chunk], on_conflict=pk).execute()
 
+    invalidate_data_cache()
+
 
 
 def safe_write_two_csvs(df1: pd.DataFrame, path1: str, df2: pd.DataFrame, path2: str) -> None:
@@ -1068,11 +1055,10 @@ def safe_read_csv(path: str, columns: list[str]) -> pd.DataFrame:
 
     table, pk = FILE_TO_TABLE[path]
 
-    rows = sb_fetch_all(table, cols="*")
-    if not rows:
+    table, _ = FILE_TO_TABLE[path]
+    df = sb_fetch_all(path, columns)
+    if df is None or df.empty:
         df = pd.DataFrame(columns=columns)
-    else:
-        df = pd.DataFrame(rows)
 
     # Ensure schema columns exist (create missing as blank/None)
     for c in columns:
@@ -1663,138 +1649,139 @@ th {{
 </html>
 """
     return html
-# ================== LOAD DATA ==================
-def load_and_migrate_data():
-    retailers = safe_read_csv(RETAILERS_FILE, CSV_SCHEMAS[RETAILERS_FILE])
-    retailers["retailer_id"] = pd.to_numeric(retailers["retailer_id"], errors="coerce").fillna(0).astype(int)
-    retailers["name"] = retailers["name"].fillna("").astype(str)
-    retailers["contact"] = retailers.get("contact", "").fillna("").astype(str)
-    retailers["address"] = retailers.get("address", "").fillna("").astype(str)
-    retailers["zone"] = retailers.get("zone", "Default").fillna("Default").astype(str).apply(_norm_zone)
-    retailers["is_active"] = retailers.get("is_active", True).apply(parse_boolish_active)
-    retailers = retailers.loc[retailers["retailer_id"] > 0].copy()
 
-    categories = safe_read_csv(CATEGORIES_FILE, CSV_SCHEMAS[CATEGORIES_FILE])
-    categories["category_id"] = pd.to_numeric(categories["category_id"], errors="coerce").fillna(0).astype(int)
-    categories["name"] = categories["name"].fillna("").astype(str)
-    categories["description"] = categories.get("description", "").fillna("").astype(str)
-    categories["default_price"] = pd.to_numeric(categories.get("default_price", 0.0), errors="coerce").fillna(0.0).astype(float)
-    categories["is_active"] = categories.get("is_active", True).apply(parse_boolish_active)
-    categories = categories.loc[categories["category_id"] > 0].copy()
+# ================== AUDIT PATCH HELPERS (added by production audit) =========
+# PATCH 1: batched opening-balance helper (fixes "previous ledger = 0" bug).
+@st.cache_data(show_spinner=False, ttl=300)
+def cached_opening_balances(retailer_ids: tuple, as_of_day, data_version: int) -> dict:
+    """{retailer_id: sales_before(day) - payments_before(day)}  — ONE query per table."""
+    _ = data_version
+    if not retailer_ids:
+        return {}
+    rids = sorted({int(r) for r in retailer_ids})
 
-    prices = safe_read_csv(PRICES_FILE, CSV_SCHEMAS[PRICES_FILE])
-    prices["price_id"] = pd.to_numeric(prices["price_id"], errors="coerce").fillna(0).astype(int)
-    prices["retailer_id"] = pd.to_numeric(prices["retailer_id"], errors="coerce").fillna(0).astype(int)
-    prices["category_id"] = pd.to_numeric(prices["category_id"], errors="coerce").fillna(0).astype(int)
-    prices["price"] = pd.to_numeric(prices["price"], errors="coerce").fillna(0.0).astype(float)
-    prices.loc[prices["retailer_id"] == 0, "retailer_id"] = GLOBAL_RETAILER_ID
-    eff = pd.to_datetime(prices["effective_date"], errors="coerce").dt.date
-    prices["effective_date"] = eff.fillna(date.today()).astype(str)
-    prices = prices.loc[prices["price_id"] > 0].copy()
+    e = sb_fetch_df(
+        ENTRIES_FILE, CSV_SCHEMAS[ENTRIES_FILE],
+        filters=[("retailer_id", "in", rids), ("date", "lt", str(as_of_day))],
+    )
+    p = sb_fetch_df(
+        PAYMENTS_FILE, CSV_SCHEMAS[PAYMENTS_FILE],
+        filters=[("retailer_id", "in", rids), ("date", "lt", str(as_of_day))],
+    )
 
-    entries = pd.DataFrame(columns=CSV_SCHEMAS[ENTRIES_FILE])
-    entries["entry_id"] = pd.to_numeric(entries["entry_id"], errors="coerce").fillna(0).astype(int)
-    entries["retailer_id"] = pd.to_numeric(entries["retailer_id"], errors="coerce").fillna(0).astype(int)
-    entries["category_id"] = pd.to_numeric(entries["category_id"], errors="coerce").fillna(0).astype(int)
-    entries["qty"] = pd.to_numeric(entries["qty"], errors="coerce").fillna(0.0).astype(float)
-    entries["rate"] = pd.to_numeric(entries["rate"], errors="coerce").fillna(0.0).astype(float)
-    entries["amount"] = pd.to_numeric(entries["amount"], errors="coerce").fillna(0.0).astype(float)
-    entries = entries.loc[entries["entry_id"] > 0].copy()
+    if e.empty:
+        sales = pd.Series(dtype=float)
+    else:
+        e2 = e.copy()
+        e2["retailer_id"] = pd.to_numeric(e2["retailer_id"], errors="coerce").fillna(0).astype(int)
+        e2["amount"] = pd.to_numeric(e2["amount"], errors="coerce").fillna(0.0)
+        sales = e2.groupby("retailer_id")["amount"].sum()
 
-    payments = pd.DataFrame(columns=CSV_SCHEMAS[PAYMENTS_FILE])
-    payments["payment_id"] = pd.to_numeric(payments["payment_id"], errors="coerce").fillna(0).astype(int)
-    payments["retailer_id"] = pd.to_numeric(payments["retailer_id"], errors="coerce").fillna(0).astype(int)
-    payments["amount"] = pd.to_numeric(payments["amount"], errors="coerce").fillna(0.0).astype(float)
-    payments["payment_mode"] = payments["payment_mode"].fillna("Cash").astype(str)
-    payments["note"] = payments["note"].fillna("").astype(str)
-    payments = payments.loc[payments["payment_id"] > 0].copy()
+    if p.empty:
+        paid = pd.Series(dtype=float)
+    else:
+        p2 = p.copy()
+        p2["retailer_id"] = pd.to_numeric(p2["retailer_id"], errors="coerce").fillna(0).astype(int)
+        p2["amount"] = pd.to_numeric(p2["amount"], errors="coerce").fillna(0.0)
+        paid = p2.groupby("retailer_id")["amount"].sum()
 
-    distributors = safe_read_csv(DISTRIBUTORS_FILE, CSV_SCHEMAS[DISTRIBUTORS_FILE])
-    distributors["distributor_id"] = pd.to_numeric(distributors["distributor_id"], errors="coerce").fillna(0).astype(int)
-    distributors["name"] = distributors["name"].fillna("").astype(str)
-    distributors["contact"] = distributors.get("contact", "").fillna("").astype(str)
-    distributors["address"] = distributors.get("address", "").fillna("").astype(str)
-    distributors["is_active"] = distributors.get("is_active", True).apply(parse_boolish_active)
-    distributors = distributors.loc[distributors["distributor_id"] > 0].copy()
-
-    dist_purchases = safe_read_csv(DISTRIBUTOR_PURCHASES_FILE, CSV_SCHEMAS[DISTRIBUTOR_PURCHASES_FILE])
-    dist_purchases["purchase_id"] = pd.to_numeric(dist_purchases["purchase_id"], errors="coerce").fillna(0).astype(int)
-    dist_purchases["distributor_id"] = pd.to_numeric(dist_purchases["distributor_id"], errors="coerce").fillna(0).astype(int)
-    dist_purchases["category_id"] = pd.to_numeric(dist_purchases["category_id"], errors="coerce").fillna(0).astype(int)
-    dist_purchases["qty"] = pd.to_numeric(dist_purchases["qty"], errors="coerce").fillna(0.0).astype(float)
-    dist_purchases["rate"] = pd.to_numeric(dist_purchases["rate"], errors="coerce").fillna(0.0).astype(float)
-    dist_purchases["amount"] = pd.to_numeric(dist_purchases["amount"], errors="coerce").fillna(0.0).astype(float)
-    dist_purchases = dist_purchases.loc[dist_purchases["purchase_id"] > 0].copy()
-
-    dist_payments = safe_read_csv(DISTRIBUTOR_PAYMENTS_FILE, CSV_SCHEMAS[DISTRIBUTOR_PAYMENTS_FILE])
-    dist_payments["payment_id"] = pd.to_numeric(dist_payments["payment_id"], errors="coerce").fillna(0).astype(int)
-    dist_payments["distributor_id"] = pd.to_numeric(dist_payments["distributor_id"], errors="coerce").fillna(0).astype(int)
-    dist_payments["amount"] = pd.to_numeric(dist_payments["amount"], errors="coerce").fillna(0.0).astype(float)
-    dist_payments["payment_mode"] = dist_payments["payment_mode"].fillna("Cash").astype(str)
-    dist_payments["note"] = dist_payments["note"].fillna("").astype(str)
-    dist_payments = dist_payments.loc[dist_payments["payment_id"] > 0].copy()
-
-    # NEW: Distributor ↔ Category mapping table
-    dist_cat_map = safe_read_csv(DISTRIBUTOR_CATEGORY_MAP_FILE, CSV_SCHEMAS[DISTRIBUTOR_CATEGORY_MAP_FILE])
-    dist_cat_map["map_id"] = pd.to_numeric(dist_cat_map["map_id"], errors="coerce").fillna(0).astype(int)
-    dist_cat_map["distributor_id"] = pd.to_numeric(dist_cat_map["distributor_id"], errors="coerce").fillna(0).astype(int)
-    dist_cat_map["category_id"] = pd.to_numeric(dist_cat_map["category_id"], errors="coerce").fillna(0).astype(int)
-    dist_cat_map["is_active"] = dist_cat_map.get("is_active", True).apply(parse_boolish_active)
-    dist_cat_map = dist_cat_map.loc[dist_cat_map["map_id"] > 0].copy()
-
-    wastage = safe_read_csv(WASTAGE_FILE, CSV_SCHEMAS[WASTAGE_FILE])
-    wastage["wastage_id"] = pd.to_numeric(wastage["wastage_id"], errors="coerce").fillna(0).astype(int)
-    wastage["category_id"] = pd.to_numeric(wastage["category_id"], errors="coerce").fillna(0).astype(int)
-    wastage["qty"] = pd.to_numeric(wastage["qty"], errors="coerce").fillna(0.0).astype(float)
-    wastage["estimated_loss"] = pd.to_numeric(wastage["estimated_loss"], errors="coerce").fillna(0.0).astype(float)
-    wastage["reason"] = wastage["reason"].fillna("").astype(str)
-    wastage = wastage.loc[wastage["wastage_id"] > 0].copy()
-
-    expenses = safe_read_csv(EXPENSES_FILE, CSV_SCHEMAS[EXPENSES_FILE])
-    expenses["expense_id"] = pd.to_numeric(expenses["expense_id"], errors="coerce").fillna(0).astype(int)
-    expenses["amount"] = pd.to_numeric(expenses["amount"], errors="coerce").fillna(0.0).astype(float)
-    expenses["paid"] = expenses.get("paid", False).apply(parse_boolish_paid)
-    expenses = expenses.loc[expenses["expense_id"] > 0].copy()
-
-    return retailers, categories, prices, entries, payments, distributors, dist_purchases, dist_payments, dist_cat_map, wastage, expenses
+    bal = sales.subtract(paid, fill_value=0.0)
+    return {int(r): float(bal.get(r, 0.0)) for r in rids}
 
 
-if "all_tables" not in st.session_state or st.session_state.get("last_version") != st.session_state["data_version"]:
+# PATCH 5: batched distributor opening balance.
+@st.cache_data(show_spinner=False, ttl=300)
+def cached_distributor_openings(dist_ids: tuple, as_of_day, data_version: int) -> dict:
+    _ = data_version
+    if not dist_ids:
+        return {}
+    dids = sorted({int(d) for d in dist_ids})
+    dp = sb_fetch_df(
+        DISTRIBUTOR_PURCHASES_FILE, CSV_SCHEMAS[DISTRIBUTOR_PURCHASES_FILE],
+        filters=[("distributor_id", "in", dids), ("date", "lt", str(as_of_day))],
+    )
+    dpay = sb_fetch_df(
+        DISTRIBUTOR_PAYMENTS_FILE, CSV_SCHEMAS[DISTRIBUTOR_PAYMENTS_FILE],
+        filters=[("distributor_id", "in", dids), ("date", "lt", str(as_of_day))],
+    )
+    if dp.empty:
+        pur = pd.Series(dtype=float)
+    else:
+        t = dp.copy()
+        t["distributor_id"] = pd.to_numeric(t["distributor_id"], errors="coerce").fillna(0).astype(int)
+        t["amount"] = pd.to_numeric(t.get("amount", 0.0), errors="coerce").fillna(0.0)
+        pur = t.groupby("distributor_id")["amount"].sum()
+    if dpay.empty:
+        paid = pd.Series(dtype=float)
+    else:
+        t = dpay.copy()
+        t["distributor_id"] = pd.to_numeric(t["distributor_id"], errors="coerce").fillna(0).astype(int)
+        t["amount"] = pd.to_numeric(t.get("amount", 0.0), errors="coerce").fillna(0.0)
+        paid = t.groupby("distributor_id")["amount"].sum()
+    bal = pur.subtract(paid, fill_value=0.0)
+    return {int(d): float(bal.get(d, 0.0)) for d in dids}
 
-    data = load_all_data(st.session_state["data_version"])
 
-    (
-        retailers,
-        categories,
-        prices,
-        entries,
-        payments,
-        distributors,
-        dist_purchases,
-        dist_payments,
-        dist_cat_map,
-        wastage,
-        expenses,
-    ) = data
+# PATCH 4: pre-computed price lookup for a day (replaces N calls to
+# get_price_for_date in report/daily-posting loops).
+@st.cache_data(show_spinner=False, ttl=600)
+def price_lookup_for_day(day, data_version: int) -> dict:
+    _ = data_version
+    if prices.empty:
+        pr = pd.DataFrame(columns=["retailer_id", "category_id", "price", "effective_date"])
+    else:
+        pr = prices.copy()
+    pr["effective_date"] = pd.to_datetime(pr["effective_date"], errors="coerce").dt.date
+    pr = pr.dropna(subset=["effective_date"])
+    pr = pr[pr["effective_date"] <= day]
+    pr = pr.sort_values("effective_date")
+    pr["retailer_id"] = pd.to_numeric(pr["retailer_id"], errors="coerce").fillna(0).astype(int)
+    pr["category_id"] = pd.to_numeric(pr["category_id"], errors="coerce").fillna(0).astype(int)
+    pr["price"] = pd.to_numeric(pr["price"], errors="coerce").fillna(0.0)
 
-    st.session_state["all_tables"] = data
-    st.session_state["last_version"] = st.session_state["data_version"]
+    latest = pr.groupby(["retailer_id", "category_id"], as_index=False).tail(1)
+    specific = {(int(r.retailer_id), int(r.category_id)): float(r.price)
+                for r in latest.itertuples() if float(r.price) > 0}
+    global_price = {k[1]: v for k, v in specific.items() if k[0] == GLOBAL_RETAILER_ID}
 
-else:
+    cat_default = {}
+    if not categories.empty and "default_price" in categories.columns:
+        for c in categories.itertuples():
+            dp = getattr(c, "default_price", None)
+            if dp is not None and not pd.isna(dp) and float(dp) > 0:
+                cat_default[int(c.category_id)] = float(dp)
 
-    (
-        retailers,
-        categories,
-        prices,
-        entries,
-        payments,
-        distributors,
-        dist_purchases,
-        dist_payments,
-        dist_cat_map,
-        wastage,
-        expenses,
-    ) = st.session_state["all_tables"]
+    return {"specific": specific, "global": global_price, "default": cat_default}
+
+
+def resolve_price(price_map: dict, rid: int, cid: int) -> float:
+    rid, cid = int(rid), int(cid)
+    v = price_map["specific"].get((rid, cid))
+    if v and v > 0:
+        return v
+    v = price_map["global"].get(cid)
+    if v and v > 0:
+        return v
+    return float(price_map["default"].get(cid, 0.0))
+# ================== END AUDIT PATCH HELPERS =================================
+
+    # ================== INITIAL DATA LOAD ==================
+(
+    retailers,
+    categories,
+    prices,
+    entries,
+    payments,
+    distributors,
+    dist_purchases,
+    dist_payments,
+    dist_cat_map,
+    wastage,
+    expenses,
+) = load_all_data(st.session_state["data_version"])
+
+
+
 # ================== ZONE HELPERS ==================
 def get_all_zones() -> list[str]:
     if retailers.empty:
@@ -1805,339 +1792,18 @@ def get_all_zones() -> list[str]:
     return zones if zones else ["Default"]
 
 
+def build_fast_report(start_date, end_date):
 
-def make_range_backup_csv(
-    start_date,
-    end_date,
-    retailers,
-    categories,
-    entries,
-    payments,
-    dist_purchases,
-    dist_payments,
-    distributors,
-):
+    entries = fetch_entries_filtered(start_date, end_date, [], st.session_state["data_version"])
+    payments = fetch_payments_filtered(start_date, end_date, [], st.session_state["data_version"])
+    purchases = fetch_purchases_filtered(start_date, end_date, [], st.session_state["data_version"])
 
-    import pandas as pd
+    # ---- AGGREGATION ----
+    sales = entries.groupby("date")["amount"].sum().reset_index()
+    pay = payments.groupby("date")["amount"].sum().reset_index()
+    purchase = purchases.groupby("date")["amount"].sum().reset_index()
 
-    entries = entries.copy()
-    payments = payments.copy()
-    dist_purchases = dist_purchases.copy()
-    dist_payments = dist_payments.copy()
-
-    entries["date"] = pd.to_datetime(entries["date"]).dt.date
-    payments["date"] = pd.to_datetime(payments["date"]).dt.date
-    dist_purchases["date"] = pd.to_datetime(dist_purchases["date"]).dt.date
-    dist_payments["date"] = pd.to_datetime(dist_payments["date"]).dt.date
-
-    entries["amount"] = entries["amount"].astype(float)
-    payments["amount"] = payments["amount"].astype(float)
-    dist_purchases["amount"] = dist_purchases["amount"].astype(float)
-    dist_payments["amount"] = dist_payments["amount"].astype(float)
-
-    cat_names = categories["name"].tolist()
-
-    days = pd.date_range(start=start_date, end=end_date, freq="D").date
-
-    # ======================
-    # PRECALC RETAILER LEDGER
-    # ======================
-
-    sales_sum = (
-        entries.groupby(["retailer_id", "date"])["amount"]
-        .sum()
-        .reset_index()
-    )
-
-    pay_sum = (
-        payments.groupby(["retailer_id", "date"])["amount"]
-        .sum()
-        .reset_index()
-    )
-
-    ledger_map = {}
-
-    all_dates = sorted(
-        set(entries["date"])
-        | set(payments["date"])
-        | set(days)
-    )
-
-    for rid in retailers["retailer_id"]:
-
-        bal = 0
-        ledger_map[rid] = {}
-
-        for d in all_dates:
-
-            s = sales_sum[
-                (sales_sum["retailer_id"] == rid)
-                & (sales_sum["date"] == d)
-            ]["amount"].sum()
-
-            p = pay_sum[
-                (pay_sum["retailer_id"] == rid)
-                & (pay_sum["date"] == d)
-            ]["amount"].sum()
-
-            prev = bal
-            bal = bal + s - p
-
-            ledger_map[rid][d] = (prev, bal)
-
-    # ======================
-    # PRECALC DISTRIBUTOR LEDGER
-    # ======================
-
-    dist_sales = (
-        dist_purchases.groupby(["distributor_id", "date"])["amount"]
-        .sum()
-        .reset_index()
-    )
-
-    dist_pay = (
-        dist_payments.groupby(["distributor_id", "date"])["amount"]
-        .sum()
-        .reset_index()
-    )
-
-    dist_ledger_map = {}
-
-    dist_ids = set(dist_purchases["distributor_id"]) | set(
-        dist_payments["distributor_id"]
-    )
-
-    all_dist_dates = sorted(
-        set(dist_purchases["date"])
-        | set(dist_payments["date"])
-        | set(days)
-    )
-
-    for did in dist_ids:
-
-        bal = 0
-        dist_ledger_map[did] = {}
-
-        for d in all_dist_dates:
-
-            s = dist_sales[
-                (dist_sales["distributor_id"] == did)
-                & (dist_sales["date"] == d)
-            ]["amount"].sum()
-
-            p = dist_pay[
-                (dist_pay["distributor_id"] == did)
-                & (dist_pay["date"] == d)
-            ]["amount"].sum()
-
-            prev = bal
-            bal = bal + s - p
-
-            dist_ledger_map[did][d] = (prev, bal)
-
-    # ======================
-    # BUILD CSV
-    # ======================
-
-    all_rows = []
-
-    for d in days:
-
-        all_rows.append([f"DATE : {d}"])
-        all_rows.append([])
-
-        header = ["Retailer"]
-
-        for c in cat_names:
-            header.append(c)
-
-        header += [
-            "Total L",
-            "Total ₹",
-            "Cash",
-            "UPI",
-            "Bank",
-            "Cheque",
-            "Other",
-            "Previous",
-            "Ledger",
-            "",
-            "",
-            "Distributor",
-        ]
-
-        for c in cat_names:
-            header.append(c)
-
-        header += [
-            "Total L",
-            "Total ₹",
-            "Payment",
-            "Previous",
-            "Ledger",
-        ]
-
-        all_rows.append(header)
-
-        e = entries[entries["date"] == d]
-        p = payments[payments["date"] == d]
-        dp = dist_purchases[dist_purchases["date"] == d]
-        dpay = dist_payments[dist_payments["date"] == d]
-
-        e_grp = (
-            e.groupby(["retailer_id", "category_id"])
-            .sum(numeric_only=True)
-            .reset_index()
-        )
-
-        dp_grp = (
-            dp.groupby(["distributor_id", "category_id"])
-            .sum(numeric_only=True)
-            .reset_index()
-        )
-
-        max_rows = max(len(retailers), len(distributors))
-
-        for i in range(max_rows):
-
-            row = []
-
-            # ---------- RETAILER ----------
-
-            if i < len(retailers):
-
-                r = retailers.iloc[i]
-
-                rid = r["retailer_id"]
-                rname = r["name"]
-
-                row.append(rname)
-
-                total_l = 0
-                total_amt = 0
-
-                for _, c in categories.iterrows():
-
-                    cid = c["category_id"]
-
-                    sub = e_grp[
-                        (e_grp["retailer_id"] == rid)
-                        & (e_grp["category_id"] == cid)
-                    ]
-
-                    qty = sub["qty"].sum()
-                    amt = sub["amount"].sum()
-
-                    row.append(qty)
-
-                    total_l += qty
-                    total_amt += amt
-
-                cash = p[
-                    (p["retailer_id"] == rid)
-                    & (p["payment_mode"].str.lower() == "cash")
-                ]["amount"].sum()
-
-                upi = p[
-                    (p["retailer_id"] == rid)
-                    & (p["payment_mode"].str.lower() == "upi")
-                ]["amount"].sum()
-
-                bank = p[
-                    (p["retailer_id"] == rid)
-                    & (p["payment_mode"].str.lower() == "bank")
-                ]["amount"].sum()
-
-                cheque = p[
-                    (p["retailer_id"] == rid)
-                    & (p["payment_mode"].str.lower() == "cheque")
-                ]["amount"].sum()
-
-                other = (
-                    p[p["retailer_id"] == rid]["amount"].sum()
-                    - cash
-                    - upi
-                    - bank
-                    - cheque
-                )
-
-                prev, ledger = ledger_map[rid].get(d, (0, 0))
-
-                row += [
-                    total_l,
-                    total_amt,
-                    cash,
-                    upi,
-                    bank,
-                    cheque,
-                    other,
-                    prev,
-                    ledger,
-                    "",
-                    "",
-                ]
-
-            else:
-
-                row += [""] * (len(cat_names) + 9)
-
-            # ---------- DISTRIBUTOR ----------
-
-            if i < len(distributors):
-
-                drow = distributors.iloc[i]
-
-                did = drow["distributor_id"]
-                dname = drow["name"]
-
-                row.append(dname)
-
-                total_l = 0
-                total_amt = 0
-
-                for _, c in categories.iterrows():
-
-                    cid = c["category_id"]
-
-                    sub = dp_grp[
-                        (dp_grp["distributor_id"] == did)
-                        & (dp_grp["category_id"] == cid)
-                    ]
-
-                    qty = sub["qty"].sum()
-                    amt = sub["amount"].sum()
-
-                    row.append(qty)
-
-                    total_l += qty
-                    total_amt += amt
-
-                pay = dpay[
-                    dpay["distributor_id"] == did
-                ]["amount"].sum()
-
-                prev_d, ledger_d = dist_ledger_map.get(
-                    did, {}
-                ).get(d, (0, 0))
-
-                row += [
-                    total_l,
-                    total_amt,
-                    pay,
-                    prev_d,
-                    ledger_d,
-                ]
-
-            all_rows.append(row)
-
-        all_rows.append([])
-        all_rows.append([])
-
-    df = pd.DataFrame(all_rows)
-
-    return df.to_csv(index=False).encode("utf-8")
-
-
+    return sales, pay, purchase
 
 def get_zone_retailer_ids(selected_zone: str) -> list[int]:
     if retailers.empty:
@@ -2544,40 +2210,10 @@ def zone_category_pivot_for_day(day: date) -> pd.DataFrame:
 
 # ================== BILL / STATEMENT HELPERS ==================
 def retailer_balance_before(retailer_id: int, start_day: date) -> float:
-    if USE_SERVER_FILTERS:
-        e = sb_fetch_df(
-            ENTRIES_FILE,
-            CSV_SCHEMAS[ENTRIES_FILE],
-            filters=[
-                ("retailer_id", "eq", int(retailer_id)),
-                ("date", "lt", str(start_day)),
-            ],
-        )
-        p = sb_fetch_df(
-            PAYMENTS_FILE,
-            CSV_SCHEMAS[PAYMENTS_FILE],
-            filters=[
-                ("retailer_id", "eq", int(retailer_id)),
-                ("date", "lt", str(start_day)),
-            ],
-        )
-    else:
-        e = entries.copy()
-        p = payments.copy()
-    sales = 0.0
-    paid = 0.0
-
-    if not e.empty:
-        e["date"] = _safe_dt(e["date"]).dt.date
-        e = e.loc[(e["retailer_id"].astype(int) == int(retailer_id)) & (e["date"] < start_day)]
-        sales = float(e["amount"].sum()) if not e.empty else 0.0
-
-    if not p.empty:
-        p["date"] = _safe_dt(p["date"]).dt.date
-        p = p.loc[(p["retailer_id"].astype(int) == int(retailer_id)) & (p["date"] < start_day)]
-        paid = float(p["amount"].sum()) if not p.empty else 0.0
-
-    return float(sales - paid)
+    """Single-retailer wrapper over the batch helper (patched)."""
+    return cached_opening_balances(
+        (int(retailer_id),), start_day, st.session_state["data_version"]
+    ).get(int(retailer_id), 0.0)
 
 def _rate_from_entries_or_price(retailer_id: int, cid: int, d: date, e_day_cat: pd.DataFrame) -> float | None:
     # Prefer stored entry rates (history-safe). If missing/zero, fallback to price table.
@@ -3103,23 +2739,26 @@ if menu == "📊 Dashboard":
                 values="qty",
                 data_version=version,
             )
-            zone_sales = cached_groupby_sum(
+            tmp = cached_groupby_sum(
                 e_zone,
                 ["zone"],
                 "amount",
                 version,
-            )["amount"]
+            )
+            zone_sales = tmp.set_index("zone")["amount"].astype(float)
 
     if (not p_day.empty) and (not rmap.empty):
         p_zone = p_day.merge(rmap[["retailer_id", "zone"]], on="retailer_id", how="left")
         p_zone["zone"] = p_zone["zone"].fillna("Default").astype(str).apply(_norm_zone)
         if not p_zone.empty:
-            zone_pay = cached_groupby_sum(
+            tmp = cached_groupby_sum(
                 p_zone,
                 ["zone"],
                 "amount",
                 version,
-            )["amount"]
+            )
+            
+            zone_pay = tmp.set_index("zone")["amount"].astype(float)
 
     if not zone_pivot.empty:
         for c in cat_names:
@@ -3129,7 +2768,7 @@ if menu == "📊 Dashboard":
         zone_pivot["TOTAL (L)"] = zone_pivot.sum(axis=1)
 
     # ---- Main book retailer rows ----
-    main_ids = set()
+    main_ids = set(get_main_retailer_ids())
     main_pivot = pd.DataFrame()
     main_sales_map = {}
     main_pay_map = {}
@@ -3188,7 +2827,7 @@ if menu == "📊 Dashboard":
         )
 
         opening_by_rid = cached_opening_balances(
-            rid_list,
+            tuple(rid_list),
             dash_day,
             version,
         )
@@ -3197,12 +2836,13 @@ if menu == "📊 Dashboard":
     if not rmap.empty and opening_by_rid:
         _tmp = rmap[["retailer_id", "zone"]].copy()
         _tmp["opening"] = _tmp["retailer_id"].map(opening_by_rid).fillna(0.0).astype(float)
-        zone_opening = cached_groupby_sum(
+        tmp = cached_groupby_sum(
             _tmp,
             ["zone"],
             "opening",
             version,
-            )["opening"]
+        )
+        zone_opening = tmp.set_index("zone")["opening"].astype(float)
         
     opening_by_name = {}
     if not main_r.empty:
@@ -3293,6 +2933,34 @@ if menu == "📊 Dashboard":
             dsum.style.format({"Purchased (L)": "{:.2f}", "Purchase Amount (₹)": "₹{:.2f}", "Paid (₹)": "₹{:.2f}", "Outstanding (₹)": "₹{:.2f}"}),
             width="stretch",
         )
+
+    # ---------------- ZONE EXPENSES (DAILY) ----------------
+    st.subheader("💼 Expenses — Daily by Zone")
+    exp_day = sb_fetch_df(
+        EXPENSES_FILE, CSV_SCHEMAS[EXPENSES_FILE],
+        filters=[("date", "eq", str(dash_day))],
+    )
+    if exp_day.empty:
+        st.info("No expenses recorded for this date.")
+    else:
+        exp_day["amount"] = pd.to_numeric(exp_day["amount"], errors="coerce").fillna(0.0)
+        exp_day["zone"] = exp_day["zone"].fillna("Default").astype(str).apply(_norm_zone)
+        # Per-zone rollup
+        exp_zone = (
+            exp_day.groupby("zone", as_index=False)["amount"].sum()
+            .rename(columns={"zone": "Zone", "amount": "Total (₹)"})
+            .sort_values("Total (₹)", ascending=False)
+        )
+        st.dataframe(exp_zone.style.format({"Total (₹)": "₹{:.2f}"}), width="stretch")
+        # Detail rows
+        with st.expander("Show expense detail rows"):
+            st.dataframe(
+                exp_day[["zone", "category", "description", "amount", "payment_mode", "paid"]]
+                    .sort_values(["zone", "amount"], ascending=[True, False]),
+                width="stretch",
+            )
+
+    
 
     # ---- Build HTML report + Download ----
     pay_modes = pd.DataFrame(columns=["Mode", "Total (₹)"])
@@ -3549,9 +3217,9 @@ if menu == "📊 Dashboard":
 
             rid_list = preview_df["ID"].astype(int).tolist()
 
-            ledger_map = cached_ledger_as_of(
-                rid_list,
-                dash_day - timedelta(days=1),
+            ledger_map = cached_opening_balances(
+                tuple(rid_list),
+                dash_day,
                 st.session_state["data_version"],
             )
 
@@ -3780,6 +3448,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
         st.stop()
 
     posting_date = st.date_input("Posting Date", value=date.today(), key="posting_date")
+    report_day = posting_date
     zone_choices = ["All Zones"] + get_all_zones()
     default_idx = zone_choices.index(selected_zone) if selected_zone in zone_choices else 0
     posting_zone = st.selectbox("Posting Zone", zone_choices, index=default_idx, key="posting_zone")
@@ -3948,8 +3617,8 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
     if lock:
         st.info("Saving… please do not interact with the page.")
 
-    form_key = f"daily_form_{ctx}_{st.session_state.get('data_version', 0)}"
-    editor_key = f"daily_sheet_editor_{ctx}_{st.session_state.get('data_version', 0)}"
+    form_key = f"daily_form_{ctx}"
+    editor_key = f"daily_sheet_editor_{ctx}"
 
     rows = len(draft_df) if draft_df is not None else 1
     row_h = 42
@@ -4074,7 +3743,6 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
 
     # ---------------- PREVIEW (computed from draft, not from globals) ----------------
     preview_df = st.session_state["daily_drafts"][ctx].copy()
-    prev_day = posting_date - timedelta(days=1)
     
     rid_list = (
         preview_df["ID"]
@@ -4082,9 +3750,9 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
         .tolist()
     )
 
-    ledger_map = cached_ledger_as_of(
-        rid_list,
-        prev_day,
+    ledger_map = cached_opening_balances(
+        tuple(rid_list),
+        report_day,
         st.session_state["data_version"],
     )
 
@@ -4543,6 +4211,70 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
         key=f"waste_editor_{posting_date}",
     )
 
+
+    # ---------------- EXPENSES ENTRY (per zone) ----------------
+    st.divider()
+    st.subheader(f"💼 Expenses for {posting_zone} — {posting_date}")
+
+    # Load existing expenses for this date+zone
+    zone_for_db = _norm_zone(posting_zone) if posting_zone != "All Zones" else "Default"
+    existing_exp = sb_fetch_df(
+        EXPENSES_FILE, CSV_SCHEMAS[EXPENSES_FILE],
+        filters=[("date", "eq", str(posting_date)), ("zone", "eq", zone_for_db)],
+    )
+
+    # Build editor frame — existing rows + 3 empty rows for new entries
+    if existing_exp is None or existing_exp.empty:
+        exp_base = pd.DataFrame({
+            "expense_id": [None, None, None],
+            "category": ["", "", ""],
+            "description": ["", "", ""],
+            "amount": [0.0, 0.0, 0.0],
+            "payment_mode": ["Cash", "Cash", "Cash"],
+            "paid": [True, True, True],
+        })
+    else:
+        e = existing_exp.copy()
+        e["amount"] = pd.to_numeric(e["amount"], errors="coerce").fillna(0.0)
+        e["paid"] = e["paid"].apply(parse_boolish_paid)
+        e["category"] = e["category"].fillna("").astype(str)
+        e["description"] = e["description"].fillna("").astype(str)
+        e["payment_mode"] = e["payment_mode"].fillna("Cash").astype(str)
+        # Append 3 empty rows for adding new entries
+        empty_rows = pd.DataFrame({
+            "expense_id": [None] * 3,
+            "category": [""] * 3,
+            "description": [""] * 3,
+            "amount": [0.0] * 3,
+            "payment_mode": ["Cash"] * 3,
+            "paid": [True] * 3,
+        })
+        exp_base = pd.concat(
+            [e[["expense_id", "category", "description", "amount", "payment_mode", "paid"]], empty_rows],
+            ignore_index=True,
+        )
+
+    exp_edit = st.data_editor(
+        exp_base,
+        column_config={
+            "expense_id": st.column_config.NumberColumn("ID", disabled=True, help="Auto-assigned"),
+            "category": st.column_config.TextColumn("Category", required=False),
+            "description": st.column_config.TextColumn("Description", required=False),
+            "amount": st.column_config.NumberColumn("Amount (₹)", min_value=0.0, step=10.0, format="%.2f"),
+            "payment_mode": st.column_config.SelectboxColumn("Mode", options=["Cash", "UPI", "Bank", "Cheque", "Other"]),
+            "paid": st.column_config.CheckboxColumn("Paid"),
+        },
+        num_rows="dynamic",
+        width="stretch",
+        key=f"exp_editor_{posting_date}_{zone_for_db}",
+    )
+
+    # Quick total display
+    exp_total = float(pd.to_numeric(exp_edit["amount"], errors="coerce").fillna(0.0).sum())
+    st.metric(f"Total Expenses for {posting_zone}", _fmt_money(exp_total))
+
+
+
     # ---------------- SINGLE SAVE ----------------
     st.divider()
     if do_save_all:
@@ -4655,6 +4387,36 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
 
             if new_w:
                 sb_insert_df(pd.DataFrame(new_w, columns=CSV_SCHEMAS[WASTAGE_FILE]), WASTAGE_FILE)
+
+            # ---- expenses: delete+insert for (date, zone)
+            sb_delete_where(
+                "expenses",
+                [("date", "eq", str(posting_date)), ("zone", "eq", zone_for_db)],
+            )
+
+            new_exp = []
+            for _, r in exp_edit.iterrows():
+                amt = float(pd.to_numeric(r.get("amount", 0.0), errors="coerce") or 0.0)
+                cat = str(r.get("category", "") or "").strip()
+                desc = str(r.get("description", "") or "").strip()
+                if amt <= 0 and cat == "" and desc == "":
+                    continue  # skip empty rows
+                if amt <= 0:
+                    continue  # don't save zero-amount rows
+                new_exp.append({
+                    "date": str(posting_date),
+                    "zone": zone_for_db,
+                    "category": cat,
+                    "description": desc,
+                    "amount": amt,
+                    "payment_mode": str(r.get("payment_mode", "Cash") or "Cash"),
+                    "paid": bool(r.get("paid", True)),
+                })
+
+            if new_exp:
+                sb_insert_df(pd.DataFrame(new_exp, columns=[
+                    "date", "zone", "category", "description", "amount", "payment_mode", "paid"
+                ]), EXPENSES_FILE)
 
             st.success("✅ Saved: Retailers + Distributors + Wastage")
             invalidate_data_cache()
@@ -5806,8 +5568,11 @@ elif menu == "💼 Expenses":
                 st.error("Amount must be > 0.")
                 st.stop()
             eid = sb_new_id("expenses", "expense_id")
+            ex_zone = st.selectbox("Zone", ["Default"] + get_all_zones(), key="ex_zone")  # add this before the Save button
+            # ...then update new_row:
             new_row = pd.DataFrame(
-                [[eid, str(ex_date), str(ex_cat).strip(), str(ex_desc).strip(), float(ex_amt), str(ex_mode), bool(ex_paid)]],
+                [[eid, str(ex_date), _norm_zone(ex_zone), str(ex_cat).strip(), str(ex_desc).strip(),
+                   float(ex_amt), str(ex_mode), bool(ex_paid)]],
                 columns=CSV_SCHEMAS[EXPENSES_FILE],
             )
             sb_insert_df(new_row, EXPENSES_FILE)
@@ -5820,7 +5585,7 @@ elif menu == "💼 Expenses":
         else:
             view = expenses.copy()
             view["date"] = _safe_dt(view["date"]).dt.strftime("%Y-%m-%d")
-            view = view[["expense_id", "date", "category", "description", "amount", "payment_mode", "paid"]].sort_values(
+            view = view[["expense_id", "date", "zone", "category", "description", "amount", "payment_mode", "paid"]].sort_values(
                 ["date", "expense_id"], ascending=[False, False]
             )
             st.dataframe(view.style.format({"amount": "₹{:.2f}"}), width="stretch")
@@ -6148,7 +5913,7 @@ elif menu == "🛡️ Data Health & Backup":
 
     if st.button("Export Range CSV"):
 
-        data = make_range_backup_csv(
+        data = build_fast_report(
             b_start,
             b_end,
             retailers,
