@@ -2867,12 +2867,28 @@ if menu == "📊 Dashboard":
 
     if not zone_pivot.empty:
         grand = {"Name": "GRAND TOTAL"}
-        for c in cat_names:
-            grand[c] = float(pd.to_numeric(zone_pivot.get(c, 0.0), errors="coerce").fillna(0.0).sum())
-        grand["TOTAL (L)"] = float(pd.to_numeric(zone_pivot.get("TOTAL (L)", 0.0), errors="coerce").fillna(0.0).sum())
-        grand["Payment (₹)"] = float(pd.to_numeric(zone_pay, errors="coerce").fillna(0.0).sum())
-        frames.append(pd.DataFrame([grand])[out_cols])
 
+        # --- CATEGORY TOTALS ---
+        for c in cat_names:
+            if c in zone_pivot.columns:
+                grand[c] = float(zone_pivot[c].fillna(0).sum())
+            else:
+                grand[c] = 0.0
+
+        # --- TOTAL MILK ---
+        if "TOTAL (L)" in zone_pivot.columns:
+            grand["TOTAL (L)"] = float(zone_pivot["TOTAL (L)"].fillna(0).sum())
+        else:
+            grand["TOTAL (L)"] = 0.0
+
+        # --- PAYMENT ---
+        if isinstance(zone_pay, (pd.Series, pd.DataFrame)):
+            grand["Payment (₹)"] = float(pd.to_numeric(zone_pay, errors="coerce").fillna(0).sum())
+        else:
+            grand["Payment (₹)"] = float(pd.to_numeric(zone_pay, errors="coerce") or 0.0)
+
+        # --- APPEND ---
+        frames.append(pd.DataFrame([grand])[out_cols])
     if not frames:
         st.info("No entries/payments found for this date.")
     else:
@@ -2880,9 +2896,6 @@ if menu == "📊 Dashboard":
         disp = out.copy()
         for c in cat_names + ["TOTAL (L)"]:
             disp[c] = disp[c].apply(fmt_zero_dash)
-        disp["Payment (₹)"] = disp["Payment (₹)"].apply(fmt_zero_dash)
-        st.dataframe(df_for_display(disp), width="stretch")
-
     # ---------------- Distributors table (daily) ----------------
     st.subheader("🚚 Distributors — Daily Summary")
     dp_day = dist_purchases.copy()
