@@ -4685,7 +4685,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             _cid = int(_row["category_id"])
             if _did not in _d_lookup or _cid not in _c_lookup:
                 continue
-            _grid_rows.append({"DID": _did, "CID": _cid, "Distributor": _d_lookup[_did], "Category": _c_lookup[_cid], "Qty A": 0.0, "Rate A": 0.0, "Qty B": 0.0, "Rate B": 0.0})
+            _grid_rows.append({"DID": _did, "CID": _cid, "Distributor": _d_lookup[_did], "Category": _c_lookup[_cid], "Packet A": 0.0, "Packet rate": 0.0, "Can": 0.0, "Can rate ": 0.0})
 
         _dist_grid_df = pd.DataFrame(_grid_rows).sort_values(["Distributor", "Category"]).reset_index(drop=True)
 
