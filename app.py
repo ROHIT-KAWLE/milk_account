@@ -5623,7 +5623,7 @@ elif menu == "💰 Price Management":
 
             df_updates = pd.DataFrame(updates)
 
-            sb.table(PRICES_FILE).upsert(
+            sb.table("prices").upsert(
                 df_updates.to_dict(orient="records"),
                 on_conflict="retailer_id,category_id"
             ).execute()
