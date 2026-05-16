@@ -5538,7 +5538,11 @@ elif menu == "💰 Price Management":
         key="price_matrix_date"
     )
 
-    retailer_list = retailers_active.sort_values("name")
+    retailer_list = (
+        retailers_active
+        .assign(zone_order=retailers_active["zone"].str.extract(r'(\d+)').astype(float))
+        .sort_values(["zone_order", "name"])
+    )
     category_list = categories_active.sort_values("name")
 
     matrix_rows = []
