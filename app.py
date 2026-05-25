@@ -5625,7 +5625,7 @@ elif menu == "💰 Price Management":
 
             sb.table("prices").upsert(
                 df_updates.to_dict(orient="records"),
-                on_conflict="retailer_id,category_id,effective_date"
+                on_conflict="retailer_id,category_id"
             ).execute()
 
             st.success(f"{len(updates)} prices updated")
