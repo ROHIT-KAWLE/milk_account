@@ -159,10 +159,14 @@ FILE_TO_TABLE = {
 
 @st.cache_resource
 def get_sb():
-    cfg = st.secrets["supabase"]
-    return create_client(cfg["url"], cfg["anon_key"])
+    if "supabase" in st.secrets:
+        url = st.secrets["supabase"]["url"]
+        key = st.secrets["supabase"]["anon_key"]
+    else:
+        url = os.environ["SUPABASE_URL"]
+        key = os.environ["SUPABASE_ANON_KEY"]
 
-sb = get_sb()
+    return create_client(url, key)
 
 if st.sidebar.button("🔌 Test DB Connection"):
     try:
