@@ -159,12 +159,12 @@ FILE_TO_TABLE = {
 
 @st.cache_resource
 def get_sb():
-    if "supabase" in st.secrets:
+    try:
         url = st.secrets["supabase"]["url"]
         key = st.secrets["supabase"]["anon_key"]
-    else:
-        url = os.environ["SUPABASE_URL"]
-        key = os.environ["SUPABASE_ANON_KEY"]
+    except Exception:
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_ANON_KEY")
 
     return create_client(url, key)
 
