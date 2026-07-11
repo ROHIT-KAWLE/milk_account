@@ -174,6 +174,8 @@ def get_sb():
 
 sb = get_sb()
 
+st.write("Checkpoint 1")
+
 if st.sidebar.button("🔌 Test DB Connection"):
     try:
         sb.table("retailers").select("retailer_id").limit(1).execute()
@@ -846,7 +848,10 @@ def make_range_backup_csv(
         writer.writerow([])
 
     return output.getvalue().encode("utf-8")
-    
+
+
+
+st.write("Checkpoint 2")
 def make_full_backup_zip(data_version: int) -> bytes:
     """
     FIXED: Uses same processed pipeline as app
@@ -1078,7 +1083,7 @@ def build_entries_view(
 
     return out[cols]
 
-
+st.write("Checkpoint 3")
 @st.cache_data(show_spinner="Loading data from Supabase…")
 def load_all_data(data_version):
     import time as _t
@@ -1112,7 +1117,7 @@ def load_all_data(data_version):
         data["dist_cat_map"], data["wastage"], data["expenses"],
     )
 
-
+st.write("Checkpoint 4")
 @st.cache_data(show_spinner=False)
 def build_entries_view_cached(
     df,
@@ -1613,6 +1618,8 @@ def sb_fetch_where(table: str, cols: str = "*", filters: list[tuple] | None = No
             q = q.in_(col, vals)
         out.extend(_fetch(q))
     return out
+
+st.write("Checkpoint 5")
 
 
 def sb_fetch_df(path: str, columns: list[str], filters: list[tuple] | None = None) -> pd.DataFrame:
@@ -3046,6 +3053,8 @@ def _rate_from_entries_or_price(retailer_id: int, cid: int, d: date, e_day_cat: 
             return float(rates.mean())
     return get_price_for_date(int(retailer_id), int(cid), d)
 
+st.write("Checkpoint 6")
+
 def build_bill_daily_grid(retailer_id: int, start_day: date, end_day: date, cat_names: list[str]) -> pd.DataFrame:
     """
     SINGLE authoritative bill grid. No duplicates.
@@ -3162,6 +3171,10 @@ def build_bill_daily_grid(retailer_id: int, start_day: date, end_day: date, cat_
         rows.append(row)
 
     return pd.DataFrame(rows)
+    
+    st.write("Checkpoint 7")
+
+
 
 def build_bill_html(
     retailer_row: dict,
@@ -3392,6 +3405,8 @@ categories_active = categories.loc[categories.get("is_active", True).apply(parse
 entries_z = filter_by_zone(entries.copy(), "retailer_id", selected_zone) if not entries.empty else pd.DataFrame(columns=entries.columns)
 payments_z = filter_by_zone(payments.copy(), "retailer_id", selected_zone) if not payments.empty else pd.DataFrame(columns=payments.columns)
 
+st.write("Checkpoint 9")
+
 # ================== UI ==================
 st.title("🥛 RANJIT BHIMRAO KAWLE MILK SUPPLIER")
 if "css_loaded" not in st.session_state:
@@ -3418,7 +3433,7 @@ if "css_loaded" not in st.session_state:
 """, unsafe_allow_html=True)
 
 
-
+st.write("Checkpoint 10")
 # ---- Production safety: always allow manual refresh ----
 if st.sidebar.button("🔄 Refresh (force latest data)", use_container_width=True):
     try:
@@ -3450,6 +3465,8 @@ menu = st.sidebar.radio(
         "🛡️ Data Health & Backup",
     ],
 )
+
+st.write("Checkpoint 11")
 # ================== DASHBOARD ==================
 if menu == "📊 Dashboard":
     st.header(f"📊 Business Overview — {selected_zone}")
@@ -4248,7 +4265,7 @@ if menu == "📊 Dashboard":
 
         st.divider()
     
-
+st.write("Checkpoint 12")
 elif menu == "📝 Daily Posting Sheet (Excel)":
     st.header("📝 Daily Posting Sheet — Retailers + Distributors + Wastage (Single Save)")
 
@@ -5080,6 +5097,8 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
 
         finally:
             st.session_state["daily_save_lock"] = False
+
+st.write("Checkpoint 13")
 elif menu == "📅 Date + Zone View":
     st.header("📅 View All Data for a Specific Date + Zone")
 
@@ -5145,6 +5164,8 @@ elif menu == "📅 Date + Zone View":
             use_container_width=True
         )
 
+st.write("Checkpoint 14")
+
 # ================== ZONE-WISE SUMMARY ==================
 elif menu == "📍 Zone-wise Summary":
     st.header("📍 Zone-wise Summary (Category Columns + Payment Mode Totals)")
@@ -5199,7 +5220,7 @@ elif menu == "📍 Zone-wise Summary":
 
         st.caption("Zone-wise totals by mode:")
         st.dataframe(mode_zone.style.format({"Total (₹)": "₹{:.2f}"}), use_container_width=True)
-
+st.write("Checkpoint 15")
 # ================== EDIT SINGLE ENTRY ==================
 elif menu == "✏️ Edit (Single Entry)":
     st.header("✏️ Edit / Delete Single Entry (Rate is preserved)")
