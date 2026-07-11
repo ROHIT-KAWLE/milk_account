@@ -1,14 +1,11 @@
-streamlit==1.45.1
-streamlit-aggrid==0.3.4.post3
-
-numpy==2.2.6
+streamlit==1.44.1
 pandas==2.2.3
-pyarrow==19.0.1
-plotly==5.24.1
+numpy==1.26.4
 
 supabase==2.15.3
-postgrest==1.1.1
-
 python-decouple==3.8
+
+plotly==5.24.1
+streamlit-aggrid==0.3.4.post3
+
 requests==2.32.3
-Pillow==11.2.1
