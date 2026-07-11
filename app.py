@@ -158,26 +158,21 @@ FILE_TO_TABLE = {
 
 @st.cache_resource
 def get_sb():
-    # Try Streamlit Cloud secrets first
-    if "supabase" in st.secrets:
-        url = st.secrets["supabase"]["url"]
-        key = st.secrets["supabase"]["anon_key"]
-    else:
-        # Render / Railway / Local
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_ANON_KEY")
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_ANON_KEY")
 
     if not url or not key:
-        raise RuntimeError(
-            "Supabase credentials not found. "
-            "Set Streamlit secrets or environment variables."
-        )
+        try:
+            url = st.secrets["supabase"]["url"]
+            key = st.secrets["supabase"]["anon_key"]
+        except Exception:
+            raise RuntimeError(
+                "Supabase credentials are missing."
+            )
 
     return create_client(url, key)
 
 sb = get_sb()
-
-
 
 if st.sidebar.button("🔌 Test DB Connection"):
     try:
