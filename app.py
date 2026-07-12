@@ -3708,7 +3708,7 @@ if menu == "📊 Dashboard":
         for c in cat_names + ["TOTAL (L)"]:
             disp[c] = disp[c].apply(fmt_zero_dash)
         disp["Payment (₹)"] = disp["Payment (₹)"].apply(fmt_zero_dash)
-        st.dataframe(df_for_display(disp), width="stretch")
+        st.dataframe(df_for_display(disp), use_container_width=True)
 
     # ---------------- Distributors table (daily) ----------------
     st.subheader("🚚 Distributors — Daily Summary")
@@ -3758,7 +3758,7 @@ if menu == "📊 Dashboard":
 
         st.dataframe(
             dsum.style.format({"Purchased (L)": "{:.2f}", "Purchase Amount (₹)": "₹{:.2f}", "Paid (₹)": "₹{:.2f}", "Outstanding (₹)": "₹{:.2f}"}),
-            width="stretch",
+            use_container_width=True,
         )
 
     # ---- Build HTML report + Download ----
@@ -5103,7 +5103,7 @@ elif menu == "📅 Date + Zone View":
         display = pd.concat([display, pd.DataFrame([totals_row], index=["GRAND TOTAL"])])
 
         st.subheader("🥛 Retailer × Category (Liters)")
-        st.dataframe(df_for_display(display), width="stretch")
+        st.dataframe(df_for_display(display), use_container_width=True)
 
     p_day = _day_payments_for_zone(view_date, view_zone)
     st.subheader("💳 Payments (This Date + Zone)")
@@ -5119,7 +5119,7 @@ elif menu == "📅 Date + Zone View":
 
         st.dataframe(
             pv[["date", "zone", "Retailer", "amount", "payment_mode", "note"]],
-            width="stretch"
+            use_container_width=True
         )
 
         mode_totals = (
@@ -5132,7 +5132,7 @@ elif menu == "📅 Date + Zone View":
         st.subheader("💳 Payment Totals by Mode")
         st.dataframe(
             mode_totals.style.format({"Total (₹)": "₹{:.2f}"}),
-            width="stretch"
+            use_container_width=True
         )
 
 # ================== ZONE-WISE SUMMARY ==================
@@ -5160,7 +5160,7 @@ elif menu == "📍 Zone-wise Summary":
             grand[c] = float(pivot[c].sum())
         display = pd.concat([display, pd.DataFrame([grand])], ignore_index=True)
 
-        st.dataframe(df_for_display(display), width="stretch")
+        st.dataframe(df_for_display(display), use_container_width=True)
 
     st.subheader("💳 Payments Collected — Totals by Mode (Zone-aware)")
     p_day = _day_payments_for_zone(s_date, "All Zones")
@@ -5185,10 +5185,10 @@ elif menu == "📍 Zone-wise Summary":
         )
 
         st.caption("Overall totals (all zones combined):")
-        st.dataframe(mode_totals.style.format({"Total (₹)": "₹{:.2f}"}), width="stretch")
+        st.dataframe(mode_totals.style.format({"Total (₹)": "₹{:.2f}"}), use_container_width=True)
 
         st.caption("Zone-wise totals by mode:")
-        st.dataframe(mode_zone.style.format({"Total (₹)": "₹{:.2f}"}), width="stretch")
+        st.dataframe(mode_zone.style.format({"Total (₹)": "₹{:.2f}"}), use_container_width=True)
 
 # ================== EDIT SINGLE ENTRY ==================
 elif menu == "✏️ Edit (Single Entry)":
@@ -5213,7 +5213,7 @@ elif menu == "✏️ Edit (Single Entry)":
     view = build_entries_view_cached(df, st.session_state["data_version"], want_milk_type_col=False)
     st.dataframe(
         view[["entry_id", "date", "zone", "Retailer", "Category", "qty", "rate", "amount"]],
-        width="stretch"
+        use_container_width=True
     )
 
     entry_id = st.number_input("Entry ID", min_value=1, step=1, key="single_entry_id")
@@ -5295,7 +5295,7 @@ elif menu == "🥛 Milk Categories":
         if categories.empty:
             st.info("No categories yet.")
         else:
-            st.dataframe(categories, width="stretch")
+            st.dataframe(categories, use_container_width=True)
 
             edit_cat = st.selectbox("Select category to edit", categories["name"].tolist(), key="cat_edit_sel")
             cat_data = categories.loc[categories["name"] == edit_cat].iloc[0]
@@ -5408,7 +5408,7 @@ elif menu == "🏪 Retailers":
         if retailers.empty:
             st.info("No retailers yet.")
         else:
-            st.dataframe(retailers, width="stretch")
+            st.dataframe(retailers, use_container_width=True)
 
             edit_ret = st.selectbox("Select retailer to edit", retailers["name"].tolist(), key="ret_edit_sel")
             ret_data = retailers.loc[retailers["name"] == edit_ret].iloc[0]
@@ -5682,13 +5682,13 @@ elif menu == "📒 Ledger":
     display = pd.concat([display, pd.DataFrame([grand_disp], index=["GRAND TOTAL"])])
 
     st.subheader("🥛 Retailer × Category Grid (Liters)")
-    st.dataframe(df_for_display(display), width="stretch")
+    st.dataframe(df_for_display(display), use_container_width=True)
 
     st.subheader("📌 Category Totals (Liters)")
     cat_totals = pivot.sum(axis=0).reset_index()
     cat_totals.columns = ["Category", "Total (L)"]
     cat_totals = cat_totals.sort_values("Total (L)", ascending=False)
-    st.dataframe(cat_totals, width="stretch")
+    st.dataframe(cat_totals, use_container_width=True)
 
 # ================== FILTERS & REPORTS ==================
 elif menu == "🔍 Filters & Reports":
@@ -5736,7 +5736,7 @@ elif menu == "🔍 Filters & Reports":
         result_view = build_entries_view_cached(filtered_entries, st.session_state["data_version"], want_milk_type_col=False)
         st.dataframe(
             result_view[["date", "zone", "Retailer", "Category", "qty", "rate", "amount"]],
-            width="stretch",
+            use_container_width=True,
         )
 
 # ================== DISTRIBUTORS ==================
@@ -5770,7 +5770,7 @@ elif menu == "🚚 Distributors":
         if distributors.empty:
             st.info("No distributors yet.")
         else:
-            st.dataframe(df_for_display(distributors), width="stretch")
+            st.dataframe(df_for_display(distributors), use_container_width=True)
 
             edit_dis = st.selectbox("Select distributor", distributors["name"].tolist(), key="dist_edit_sel")
             dis_data = distributors.loc[distributors["name"] == edit_dis].iloc[0]
@@ -5979,7 +5979,7 @@ elif menu == "📒 Distributor Ledger":
         preview["Total Milk (L)"] = preview["Total Milk (L)"].apply(_disp_2dec_or_dash)
 
 
-    st.dataframe(df_for_display(preview), width="stretch")
+    st.dataframe(df_for_display(preview), use_container_width=True)
 
     # ---------------- GRAND TOTALS (Categories + Payments) ----------------
     # Computed from the in-memory preview derived from current draft for (date, zone).
@@ -6036,7 +6036,7 @@ elif menu == "📒 Distributor Ledger":
             if c not in ("Category Totals", "GRAND TOTAL (L)"):
                 tot_df[c] = tot_df[c].apply(fmt_zero_dash)
         tot_df["GRAND TOTAL (L)"] = tot_df["GRAND TOTAL (L)"].apply(lambda x: f"{float(x):.2f}")
-        st.dataframe(df_for_display(tot_df), width="stretch")
+        st.dataframe(df_for_display(tot_df), use_container_width=True)
 
 
     st.subheader("💳 Payment Mode Totals (Period)")
@@ -6044,7 +6044,7 @@ elif menu == "📒 Distributor Ledger":
     if pm.empty:
         st.info("No payments in this period.")
     else:
-        st.dataframe(pm.style.format({"Total (₹)": "₹{:.2f}"}), width="stretch")
+        st.dataframe(pm.style.format({"Total (₹)": "₹{:.2f}"}), use_container_width=True)
 
 
 # ================== DISTRIBUTOR BILL ==================
@@ -6115,7 +6115,7 @@ elif menu == "🧾 Distributor Bill":
         preview["Total Milk (L)"] = preview["Total Milk (L)"].apply(_disp_2dec_or_dash)
 
 
-    st.dataframe(df_for_display(preview), width="stretch")
+    st.dataframe(df_for_display(preview), use_container_width=True)
 
     # ---------------- GRAND TOTALS (Categories + Payments) ----------------
     # Computed from the in-memory preview derived from current draft for (date, zone).
@@ -6172,7 +6172,7 @@ elif menu == "🧾 Distributor Bill":
             if c not in ("Category Totals", "GRAND TOTAL (L)"):
                 tot_df[c] = tot_df[c].apply(fmt_zero_dash)
         tot_df["GRAND TOTAL (L)"] = tot_df["GRAND TOTAL (L)"].apply(lambda x: f"{float(x):.2f}")
-        st.dataframe(df_for_display(tot_df), width="stretch")
+        st.dataframe(df_for_display(tot_df), use_container_width=True)
 
 
     html = build_distributor_bill_html(drow, start_day, end_day, grid, pm, cat_names)
@@ -6233,7 +6233,7 @@ elif menu == "💼 Expenses":
             view = view[["expense_id", "date", "category", "description", "amount", "payment_mode", "paid"]].sort_values(
                 ["date", "expense_id"], ascending=[False, False]
             )
-            st.dataframe(view.style.format({"amount": "₹{:.2f}"}), width="stretch")
+            st.dataframe(view.style.format({"amount": "₹{:.2f}"}), use_container_width=True)
 
             st.divider()
             st.subheader("✏️ Edit / Delete Expense")
@@ -6412,7 +6412,7 @@ elif menu == "🧾 Retailers Bill":
     if "Total Milk (L)" in preview.columns:
         preview["Total Milk (L)"] = preview["Total Milk (L)"].apply(_disp_2dec_or_dash)
 
-    st.dataframe(df_for_display(preview), width="stretch")
+    st.dataframe(df_for_display(preview), use_container_width=True)
 
     # ---------------- GRAND TOTALS (Categories + Payments) ----------------
     # Computed from the in-memory preview derived from current draft for (date, zone).
@@ -6469,14 +6469,14 @@ elif menu == "🧾 Retailers Bill":
             if c not in ("Category Totals", "GRAND TOTAL (L)"):
                 tot_df[c] = tot_df[c].apply(fmt_zero_dash)
         tot_df["GRAND TOTAL (L)"] = tot_df["GRAND TOTAL (L)"].apply(lambda x: f"{float(x):.2f}")
-        st.dataframe(df_for_display(tot_df), width="stretch")
+        st.dataframe(df_for_display(tot_df), use_container_width=True)
 
 
     st.subheader("💳 Payment Mode Totals (Period)")
     if pay_mode_totals.empty:
         st.info("No payments in this period.")
     else:
-        st.dataframe(pay_mode_totals.style.format({"Total (₹)": "₹{:.2f}"}), width="stretch")
+        st.dataframe(pay_mode_totals.style.format({"Total (₹)": "₹{:.2f}"}), use_container_width=True)
 
     # --- Print ONLY categories that were purchased (qty > 0 anywhere in the period) ---
     purchased_cats = []
@@ -6538,7 +6538,7 @@ elif menu == "🛡️ Data Health & Backup":
         file_name=f"milk_accounting_backup_{date.today().isoformat()}.zip",
         mime="application/zip",
         key=f"backup_zip_{dv}",
-        width="stretch",
+        use_container_width=True,
     )
 
 
@@ -6654,6 +6654,6 @@ elif menu == "🛡️ Data Health & Backup":
         st.error(f"⚠️ Found {len(issues)} integrity issue group(s). Fix before trusting reports.")
         for title, df in issues:
             st.subheader(title)
-            st.dataframe(df, width="stretch")
+            st.dataframe(df, use_container_width=True)
             st.divider()
   
