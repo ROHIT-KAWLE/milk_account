@@ -4467,16 +4467,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
         }
         """)
 
-        ag_result = AgGrid(
-            draft_df,
-            gridOptions=grid_options,
-            update_mode="MODEL_CHANGED",
-            height=table_height,
-            fit_columns_on_grid_load=False,
-            allow_unsafe_jscode=True,
-            theme="streamlit",
-            use_container_width=True,
-        )
+        st.write("AgGrid disabled temporarily")
 
         edited = pd.DataFrame(ag_result["data"])
         do_save_all = st.form_submit_button("💾 Save All (Retailers + Distributors + Wastage)", type="primary", disabled=lock)
@@ -4759,17 +4750,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             }
             """)
 
-            _dist_result = AgGrid(
-                _display_df,
-                gridOptions=_grid_opts,
-                update_mode="MODEL_CHANGED",
-                height=min(120 + len(_display_df) * 42, 600),
-                fit_columns_on_grid_load=False,
-                allow_unsafe_jscode=True,
-                theme="streamlit",
-                use_container_width=True,
-                key=f"dist_grid_{posting_date}",
-            )
+            st.write("AgGrid disabled temporarily")
 
             _dist_edited = pd.DataFrame(_dist_result["data"])
             _dist_edited["DID"] = _dist_grid_df["DID"].values
