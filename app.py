@@ -4470,7 +4470,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
         ag_result = AgGrid(
             draft_df,
             gridOptions=grid_options,
-            update_mode="MODEL_CHANGED",
+            update_on=['cellValueChanged', 'valueChanged'],
             height=table_height,
             fit_columns_on_grid_load=False,
             allow_unsafe_jscode=True,
@@ -4762,7 +4762,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             _dist_result = AgGrid(
                 _display_df,
                 gridOptions=_grid_opts,
-                update_mode="MODEL_CHANGED",
+                update_on=['cellValueChanged', 'valueChanged'],
                 height=min(120 + len(_display_df) * 42, 600),
                 fit_columns_on_grid_load=False,
                 allow_unsafe_jscode=True,
