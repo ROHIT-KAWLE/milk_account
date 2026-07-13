@@ -4472,7 +4472,7 @@ elif menu == "📝 Daily Posting Sheet (Excel)":
             gridOptions=grid_options,
             update_mode="MODEL_CHANGED",
             height=table_height,
-            fit_columns_on_grid_load=True,
+            fit_columns_on_grid_load=False,
             allow_unsafe_jscode=True,
             theme="streamlit",
             use_container_width=True,
